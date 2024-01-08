@@ -1,0 +1,938 @@
+---
+title: "Week 1 Take Home Lab"
+author: "Sam Fritz-Schreck"
+date: "2024-01-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE)
+
+
+
+library(mice)
+
+library(e1071)
+
+library(ROCR)
+
+## Library for An Introduction to Statistical Learning with Applications in R
+library(ISLR)
+
+## Libraries for Plotting our Results
+library(ggplot2)
+library(gridExtra)
+
+## Library for confusion matrix
+library(caret)
+
+## load data from previous quarter
+load("final.RData")
+
+```
+
+## Week 4 Take-Home Lab Assignment
+
+Rudy Yoshida
+
+### Introduction
+
+For this week's take-home lab, you'll solve the very same problem studied in this week's in-class lab on a much larger and more interesting dataset. The data contained in the file UCI_Credit_Card.csv contains 30,000 consumer records with 24 different variables. You can read a detailed description of the different fields at the following website: <https://archive.ics.uci.edu/ml/datasets/default+of+credit+card+clients> The description from the UCI says marriage should have levels: Marital status (1 = married; 2 = single; 3 = others) However, there are levels (0,1,2,3). You should treat 0 as unknown. the description from the UCI says Education (1 = graduate school; 2 = university; 3 = high school; 4 = others). However, there are levels 1 to 6 for education. Thus here 5 = 6 = unknow. X6-X11: The measurement scale for the repayment status is: -1 = pay duly; 1 = payment delay for one month; 2 = payment delay for two months; . . .; 8 = payment delay for eight months; 9 = payment delay for nine months and above. However, there are many factors that are -2. This is also unknown. So every unknown you should treat them as NA.
+
+Your task is to build the best possible model for predicting whether or not a consumer will default on their credit card payment for the next month (the last column in the dataset).
+
+Perform the following tasks:
+
+Conduct a training/test split of the data, building a 20% held out test dataset
+
+Fit the best logistic regression model you can (consider feature selection etc.) to the data to predict consumer default. Make sure that all predictors are standardized by the scale() function.
+
+### Data Cleaning/EDA
+
+```{r}
+Default = read.csv('UCI_Credit_Card.csv', header = T)
+
+#Default$EDUCATION[Default$EDUCATION == 1] = 2
+#Default$EDUCATION[Default$EDUCATION == 2] = 'University'
+#Default$EDUCATION[Default$EDUCATION == 3] = 'High_School'
+#Default$EDUCATION[Default$EDUCATION == 4] = 'Other'
+Default$EDUCATION[Default$EDUCATION == 5] = NA
+Default$EDUCATION[Default$EDUCATION == 6] = NA
+Default$EDUCATION[Default$EDUCATION == 0] = NA
+
+Default$MARRIAGE[Default$MARRIAGE == 0] = NA
+#Default$MARRIAGE[Default$MARRIAGE == 1] = 'Married'
+#Default$MARRIAGE[Default$MARRIAGE == 2] = 'Single'
+#Default$MARRIAGE[Default$MARRIAGE == 3] = 'Other'
+
+Default[,6:11][Default[,6:11] == 2] = 1
+Default[,6:11][Default[,6:11] >= 3] = 2
+Default[,6:11][Default[,6:11] == -2] = NA
+#Default[,6:11][Default[,6:11] == -1] = 0
+
+summary(Default)
+
+Default$default.payment.next.month = factor(Default$default.payment.next.month, levels = c(0,1), labels = c('No','Yes'))
+Default$SEX = factor(Default$SEX)
+Default$EDUCATION = factor(Default$EDUCATION)
+Default$MARRIAGE = factor(Default$MARRIAGE)
+for (x in 6:11){
+  Default[,x] = factor(Default[,x])
+}
+Default_scale = Default
+Default_scale[,c(1,5,12:23)] = scale(Default[,c(1,5,12:23)])
+#remove payment observations more than 52 sd from mean
+Default_scale = subset(Default_scale, Default_scale$PAY_AMT1<=52 & Default_scale$PAY_AMT2<=52 & Default_scale$PAY_AMT3<=52& Default_scale$PAY_AMT4<=52& Default_scale$PAY_AMT5<=52& Default_scale$PAY_AMT6<=52)
+
+Default.na_omit = na.omit(Default_scale)
+#K1 = kmeans(Default.na_omit[,c(12:23)],4,nstart=25)
+#Default.na_omit$PayCluster = K1$cluster
+#fviz_cluster(K1, data = Default.na_omit[,c(12:23)])
+#Default.na_omit = Default.na_omit[,-c(12:23)]
+summary(Default.na_omit)
+
+```
+
+### Data Imputation
+
+```{r}
+pMiss <- function(x){sum(is.na(x))/length(x)*100}
+
+apply(Default,2,pMiss)
+
+library(VIM)
+aggr_plot <- aggr(Default, col=c('navyblue','red'), numbers=TRUE, sortVars=TRUE, labels=names(Default), cex.axis=.7, gap=3, ylab=c("Histogram of missing data","Pattern"))
+
+
+imp <- mice(Default_scale, maxit = 2, m = 2, seed = 1)
+Default_imp = complete(imp)
+
+# inspect quality of imputations
+stripplot(imp, MARRIAGE, pch = 19, xlab = "Imputation number")
+stripplot(imp, EDUCATION, pch = 19, xlab = "Imputation number")
+
+library(ggplot2)
+# Basic box plot
+base <- ggplot(Default, aes(x=MARRIAGE, y=LIMIT_BAL)) + 
+  geom_boxplot()
+base
+
+imput <- ggplot(Default_imp, aes(x=MARRIAGE, y=LIMIT_BAL)) + 
+  geom_boxplot()
+imput
+
+Default_imp_nopay = Default_imp[, -c(6:11)]
+```
+
+\* Don't include payment status as a predictor? \*
+
+```{r message = FALSE, warning=FALSE}
+## Plot the actual data
+plotData <- ggplot(data = Default,
+       mapping = aes(x = LIMIT_BAL, y = AGE, color = as.factor(default.payment.next.month), shape = MARRIAGE)) +
+    layer(geom = "point", stat = "identity", position = "identity") +
+    scale_color_manual(values = c('0' = "blue", '1' = "red")) +
+    theme_bw() +
+    theme(legend.key = element_blank()) +
+    labs(title = "Original data")
+plotData
+```
+
+### Logit Modelling
+
+```{r}
+set.seed(547)  # ensures we all get the sample sample of data for train/test
+
+sampler.na_omit <- sample(nrow(Default.na_omit),trunc(nrow(Default.na_omit)*.80)) # samples index
+sampler.imp <- sample(nrow(Default_imp),trunc(nrow(Default_imp)*.80)) # samples index
+
+na_omit.Train <- Default.na_omit[sampler.na_omit,]
+na_omit.Test <- Default.na_omit[-sampler.na_omit,]
+
+imp.Train <- Default_imp[sampler.imp,]
+imp.Test <- Default_imp[-sampler.imp,]
+
+Logit.na_omit <- glm(formula = default.payment.next.month ~ .,
+               family  = binomial(link = "logit"),
+               data    = na_omit.Train)
+summary(Logit.na_omit)
+
+Logit.imp <- glm(formula = default.payment.next.month ~ .,
+               family  = binomial(link = "logit"),
+               data    = imp.Train)
+summary(Logit.imp)
+```
+
+```{r message = FALSE, warning=FALSE}
+# Conduct stepwise model selection
+Logit.step.na_omit<-step(Logit.na_omit, direction = "both")
+
+Logit.step.imp<-step(Logit.imp, direction = "both")
+
+# Summarize the selected model
+summary(Logit.step.na_omit)
+
+summary(Logit.step.imp)
+```
+
+```{r message = FALSE, warning=FALSE}
+# Put the predicted probability and class (at 0.5 threshold) at the end of the dataframe
+predProbLogit.na_omit <- predict(Logit.step.na_omit, type = "response", newdata = na_omit.Test)
+predClassLogit.na_omit <- factor(predict(Logit.step.na_omit, type = "response", newdata=na_omit.Test) > 0.45, levels = c(FALSE,TRUE), labels = c("No","Yes"))
+
+# Create a plotting version of the Default dataset where we will store model predictions
+na_omit.Test.Plotting <- na_omit.Test
+
+# Put the predicted probability and class (at 0.5 threshold) at the end of the plotting dataframe
+na_omit.Test.Plotting$predProbLogit <- predProbLogit.na_omit
+na_omit.Test.Plotting$predClassLogit <- predClassLogit.na_omit
+
+summary(na_omit.Test.Plotting)  # look at a summary of the updated data frame
+
+# Put the predicted probability and class (at 0.5 threshold) at the end of the dataframe
+predProbLogit.imp <- predict(Logit.step.imp, type = "response", newdata = imp.Test)
+predClassLogit.imp <- factor(predict(Logit.step.imp, type = "response", newdata=imp.Test) > 0.45, levels = c(FALSE,TRUE), labels = c("No","Yes"))
+
+# Create a plotting version of the Default dataset where we will store model predictions
+imp.Test.Plotting <- imp.Test
+
+# Put the predicted probability and class (at 0.5 threshold) at the end of the plotting dataframe
+imp.Test.Plotting$predProbLogit <- predProbLogit.imp
+imp.Test.Plotting$predClassLogit <- predClassLogit.imp
+
+#summary(imp.Test.Plotting)  # look at a summary of the updated data frame
+```
+
+```{r message = FALSE, warning=FALSE}
+# Generate a confusion matrix and performance statistics on test dataset
+confusionMatrix(data=predClassLogit.na_omit, reference=na_omit.Test$default.payment.next.month)
+
+confusionMatrix(data=predClassLogit.imp, reference=imp.Test$default.payment.next.month)
+```
+
+```{R message = FALSE, warning=FALSE}
+# Calculate AUC - use @y.values to get AUC out
+Logit.AUC.na_omit <- performance(prediction(predProbLogit.na_omit, na_omit.Test$default.payment.next.month), measure="auc")@y.values
+Logit.AUC.na_omit
+
+Logit.AUC.imp <- performance(prediction(predProbLogit.imp, imp.Test$default.payment.next.month), measure="auc")@y.values
+Logit.AUC.imp
+```
+
+### Assignment Questions
+
+Provide a summary and discussion of your work in written form (.docx or .pdf) that includes the following:
+
+Q1 Summarize the model/feature selection process you used to fit your logistic regression model
+
+I started with just cleaning the raw data and converting values to NA that needed to be. I also converted the sex, education, and marriage predictors and the default response to factors. Then, I scaled the remaining predictors and removed NAs to create a dataset to compare against imputation of NAs. Once I had these two datasets, I split them 80/20 into training and test sets. This resulted in roughly 0.77 AUC for the omitted data and 0.74 for the imputted data.
+
+After seeing that the PAY\_\* predictors playing a significant role, I decided to try to incorporate them as a categorical predictor rather than numerical. Following issues with factors showing in the test set that were not in the training set, I decided to reduce the dimensionality by keeping -1 (pay duly) and 0 (pay on time but not in full) as their own categories, 1 month late and 2 months late as the same category, and 3 or more months late as the same category. This brought the performance up to about 0.79 and 0.76 AUC respectively.
+
+Finally, I identified three outliers within the PAY_AMT\* predictors that were more than 50 SD from the mean payment within that month so I removed them from both datasets. This resulted in 0.81 and 0.77 respectively, the best performance achieved for this model. Both models are summarized below.
+
+Most of the effort was put into the cleaning and munging of the data allowing the step function to select a good performing model. This effort will likely make our future model fitting and comparison easier.
+
+Q2 Provide a summary of the fitted logistic regression model (i.e. model summary)
+
+```{r, eval=TRUE}
+summary(Logit.step.na_omit)
+
+summary(Logit.step.imp)
+```
+
+For both datasets, we see that the history of payments plays a critical role in predicting defaults.
+
+Q3 Provide performance evaluation of the fitted logistic regression model using confusion matrix.
+
+```{r message = FALSE, warning=FALSE, eval=TRUE}
+# Generate a confusion matrix and performance statistics on test dataset
+confusionMatrix(data=predClassLogit.na_omit, reference=na_omit.Test$default.payment.next.month)
+
+confusionMatrix(data=predClassLogit.imp, reference=imp.Test$default.payment.next.month)
+```
+
+For both, the sensitivity is similar but the specificity of the imputed data set is lower resulting in lower performance.
+
+Q4 How well do you think the fitted logistic regression model to this dataset works?
+
+Surprisingly, just omitting NAs resulted in the best performance compared to imputation. I think this is due to the number of missing values (roughly 15%) which dilutes the critical PAY\_\* predictors too much.
+
+Submission Instructions
+
+For this weekly lab assignment, you should submit:
+
+An R script file (or Rmd file)
+
+A written summary/discussion of your work (as discussed above) in .docx or .pdf format.
+
+If you want to just summarize in a single Rmd file, please make sure you write your answer very clearly.
+
+## Week 5 Take-Home Lab Assignment
+
+Rudy Yoshida
+
+Introduction
+
+For this week's take-home lab, you will work on the same data set from Week 4 Take-Home Lab. You will solve the very same problem studied in this week's in-class lab on a much larger and more interesting dataset. The data contained in the file UCI_Credit_Card.csv contains 30,000 consumer records with 24 different variables. You can read a detailed description of the different fields at the following website: <https://archive.ics.uci.edu/ml/datasets/default+of+credit+card+clients> The description from the UCI says marriage should have levels: Marital status (1 = married; 2 = single; 3 = others) However, there are levels (0,1,2,3). You should treat 0 as unknown. the description from the UCI says Education (1 = graduate school; 2 = university; 3 = high school; 4 = others). However, there are levels 1 to 6 for education. Thus here 5 = 6 = unknow. X6-X11: The measurement scale for the repayment status is: -1 = pay duly; 1 = payment delay for one month; 2 = payment delay for two months; . . .; 8 = payment delay for eight months; 9 = payment delay for nine months and above. However, there are many factors that are -2. This is also unknown. So every unknown you should treat them as NA.
+
+Your task is to build the best possible model for predicting whether or not a consumer will default on their credit card payment for the next month (the last column in the dataset).
+
+Perform the following tasks:
+
+Conduct a training/test split of the data, building a 20% held out test dataset
+
+Fit the best SVM model you can (consider feature selection etc.) to the data to predict consumer default.
+
+Then plot ROC curves for the logistic regression and SVM and compare their performance.
+
+Compute the AUC for the logistic regression and SVM and compare their performance.
+
+```{r message = FALSE, warning=FALSE}
+
+# Set a seed value so get same answer each time we fit
+set.seed(123)
+
+# Balance data using weights
+## SVM performs poorly when the data set is not balanced.
+wts <- 100/table(Default$default.payment.next.month)
+
+# Apply SVM model using linear kernel having default target and rest three as predictors
+ SVM.na_omit <- svm(default.payment.next.month ~ .,data=na_omit.Train, kernel="linear",
+             cost=1,gamma=1, class.weight=wts,
+             probability=TRUE, decision.values=TRUE)
+ SVM.imp <- svm(default.payment.next.month ~ .,data=imp.Train, kernel="linear",
+             cost=1,gamma=1, class.weight=wts,
+             probability=TRUE, decision.values=TRUE)
+summary(SVM.na_omit)
+summary(SVM.imp)
+```
+
+```{r message=FALSE, warning=FALSE}
+# Get the probabilities predicted by SVM
+predProbSVM.raw.na_omit <-predict(SVM.na_omit, na_omit.Test, probability = TRUE)
+
+# Get the probabilitiy of "Yes" from the attributes
+predProbSVM.na_omit <- attributes(predProbSVM.raw.na_omit)$probabilities[,2]
+
+# Get the probability classes
+predClassSVM.na_omit <- predict(SVM.na_omit, newdata = na_omit.Test)
+
+# Attach to our plotting dataframe
+na_omit.Test.Plotting$predProbSVM.na_omit  <- predProbSVM.na_omit
+na_omit.Test.Plotting$predClassSVM.na_omit <- predClassSVM.na_omit
+
+# Get the probabilities predicted by SVM
+predProbSVM.raw.imp <-predict(SVM.imp, imp.Test, probability = TRUE)
+
+# Get the probabilitiy of "Yes" from the attributes
+predProbSVM.imp <- attributes(predProbSVM.raw.imp)$probabilities[,2]
+
+# Get the probability classes
+predClassSVM.imp <- predict(SVM.imp, newdata = imp.Test)
+
+# Attach to our plotting dataframe
+imp.Test.Plotting$predProbSVM.imp  <- predProbSVM.imp
+imp.Test.Plotting$predClassSVM.imp <- predClassSVM.imp
+```
+
+```{r message = FALSE, warning=FALSE}
+# Report confusion matrix from SVM model for comparison
+confusionMatrix(predClassSVM.na_omit, na_omit.Test$default.payment.next.month)
+confusionMatrix(predClassSVM.imp, imp.Test$default.payment.next.month)
+```
+
+### SVM Tuning
+
+```{r message = FALSE, warning=FALSE}
+# Balance data using weights from training dataset
+wts <- 100/table(na_omit.Train$default)
+
+# Now we build a tuned SVM model using the tune function
+# Note this code is commented out due to long model fitting time
+set.seed(123)
+SVM.Tuned=tune(svm, default.payment.next.month~., data=na_omit.Train, kernel="linear", probability = TRUE,
+             class.weight=wts,  ranges=list(cost=c(0.1,1,10),
+             gamma=c(0.5,1,2)))
+
+SVM.Tuned # prints report about SVM.Tuned
+# This code loads the model fit using the code above that is saved into your css_data file
+# Take note of this feature - we are loading a previously fit model stored as an .RData file
+# load("SVM.RData")  # loads model data file saved by instructor
+# Now extract the best model
+SVM.Best<-SVM.Tuned$best.model
+```
+
+```{r message = FALSE, warning=FALSE}
+# Calculate tuned model performance on the test dataset
+predClassSVMBest=predict(SVM.Best, na_omit.Test)
+
+# Report confusion matrix from on the test dataset
+confusionMatrix(predClassSVMBest, na_omit.Test$default.payment.next.month)
+
+# Get the probabilities predicted by SVM
+predProbSVM.raw.na_omit <-predict(SVM.Best, na_omit.Test, probability = TRUE)
+
+# Get the probabilitiy of "Yes" from the attributes
+predProbSVM.na_omit <- attributes(predProbSVM.raw.na_omit)$probabilities[,2]
+
+# Calculate ROC statistics for our best logit model
+Logit.ROC <- performance(prediction(predProbLogit.na_omit, na_omit.Test$default.payment.next.month), measure="tpr", x.measure="fpr")
+
+SVM.ROC <- performance(prediction(predProbSVM.na_omit, na_omit.Test$default.payment.next.month), measure="tpr", x.measure="fpr")
+
+SVM.AUC.na_omit <- performance(prediction(predProbSVM.na_omit, na_omit.Test$default.payment.next.month), measure="auc")@y.values
+```
+
+### Assignment Questions
+
+Provide a summary and discussion of your work in written form (.docx or .pdf) that includes the following:
+
+Q1 Summarize the model/feature selection process you used to fit your SVM model.
+
+I fit an un-tuned SVM on both the omitted and the imputted data. After seeing that the performance was again better on the omitted data, I chose to only tune that SVM due to the amount of time the tuning process takes.
+
+Q2 Provide a summary of the fitted SVM model (i.e. model summary)
+
+```{r, eval=TRUE}
+summary(SVM.Best)
+```
+
+Best cost value of the three tested was 0.1 with approx 13000 support vectors.
+
+Q3 Provide performance evaluation of the fitted SVM model using confusion matrix.
+
+```{r,eval=TRUE}
+confusionMatrix(predClassSVMBest, na_omit.Test$default.payment.next.month)
+```
+
+Compared to the best Logit model, the tuned SVM has lower sensitivity but higher specificity. Looking at the the matrix, it does a better job classifying people that actually default. (625 vs 512)
+
+Q4 How well do you think the fitted SVM model to this dataset works?
+
+Following tuning, we see similar but slightly lower performance as compared to the Logit model. Both in performance and computation time, Logit is the preferred model thus far.
+
+Q5 Using ROC curves and AUC, which one of logistic regression and SVM works better with the dataset so far?
+
+```{r,eval=TRUE}
+### Plot our ROC Performance with Logit as base
+plot(Logit.ROC, lwd=2, main = "ROC Comparison for Models on Test Dataset")
+
+# Add SVM
+lines(attributes(SVM.ROC)$x.values[[1]], attributes(SVM.ROC)$y.values[[1]], 
+      col="red", lwd=2)
+
+#Add Legend
+legend(x=.5, y=.6, c("Logistic (Step)", "SVM"), 
+       col=c("black", "red"), lwd=c(2,2))
+```
+
+```{r, eval=TRUE}
+Logit.AUC.na_omit
+SVM.AUC.na_omit
+```
+
+Submission Instructions
+
+For this weekly lab assignment, you should submit:
+
+An R script file (or Rmd file)
+
+A written summary/discussion of your work (as discussed above) in .docx or .pdf format.
+
+If you want to just summarize in a single Rmd file, please make sure you write your answer very clearly.
+
+## Week 6 Take-Home Lab Assignment
+
+Introduction
+
+For this week's take-home lab, you will work on the same data set from Week 4/5 Take-Home Labs. You will solve the very same problem studied in this week's in-class lab on a much larger and more interesting dataset. The data contained in the file UCI_Credit_Card.csv contains 30,000 consumer records with 24 different variables. You can read a detailed description of the different fields at the following website: <https://archive.ics.uci.edu/ml/datasets/default+of+credit+card+clients> The description from the UCI says marriage should have levels: Marital status (1 = married; 2 = single; 3 = others) However, there are levels (0,1,2,3). You should treat 0 as unknown. the description from the UCI says Education (1 = graduate school; 2 = university; 3 = high school; 4 = others). However, there are levels 1 to 6 for education. Thus here 5 = 6 = unknown. X6-X11: The measurement scale for the repayment status is: -1 = pay duly; 1 = payment delay for one month; 2 = payment delay for two months; . . .; 8 = payment delay for eight months; 9 = payment delay for nine months and above. However, there are many factors that are -2. This is also unknown. So every unknown you should treat them as NA.
+
+Your task is to build the best possible model for predicting whether or not a consumer will default on their credit card payment for the next month (the last column in the dataset). Assignment
+
+Perform the following tasks:
+
+Conduct a training/test split of the data, building a 20% held out test dataset
+
+Fit the best KNN model and CART model you can (consider feature selection etc.) to the data to predict consumer default.
+
+### KNN Model
+
+```{r}
+library(class) # new library for KNN modeling
+library(rpart) # new library for CART modeling
+
+# New package for making pretty pictures of CART trees
+library(rpart.plot)
+
+# Assigning the response 
+train.def <- na_omit.Train$default.payment.next.month
+test.def <- na_omit.Test$default.payment.next.month
+
+# Assign explanatory variables
+train.gc <- na_omit.Train[,1:23]
+test.gc <- na_omit.Test[,1:23]
+
+knn.1 <-  knn(train.gc, test.gc, train.def, k=1)
+knn.5 <-  knn(train.gc, test.gc, train.def, k=5)
+knn.20 <- knn(train.gc, test.gc, train.def, k=20)
+```
+
+Now we will calculate the proportion of correct classification for k = 1, 5 & 20.
+
+```{r message = FALSE, warning=FALSE}
+sum(test.def == knn.1)/length(test.def)  # For knn = 1
+sum(test.def == knn.5)/length(test.def) # For knn = 5
+sum(test.def == knn.20)/length(test.def)  # For knn = 20
+```
+
+Now we try to find the best K via cross validation.
+
+```{r message = FALSE, warning=FALSE}
+knn.cross <- tune.knn(x = train.gc, y = train.def, k = 1:175,tunecontrol=tune.control(sampling = "cross"), cross=10)
+summary(knn.cross)
+plot(knn.cross)
+```
+
+Now we try to find the best K via bootstrapping
+
+```{r message = FALSE, warning=FALSE}
+## This part take a bit time so I made RData file
+#knn.boot <- tune.knn(x = train.gc, y = train.def, k = 1:40,tunecontrol=tune.control(sampling = "boot"), cross=10)
+#load("KNN_in_class.RData")
+#summary(knn.boot)
+#plot(knn.boot)
+```
+
+```{r message = FALSE, warning=FALSE}
+knn.20 = knn(train.gc, test.gc, train.def, k=20)
+knn.best <-  knn(train.gc, test.gc, train.def, k=151)
+sum(test.def == knn.best)/length(test.def)  # For knn = sqrt(n)
+# Confusion Matrix 
+confusionMatrix(knn.best, na_omit.Test$default.payment.next.month)
+confusionMatrix(knn.20, na_omit.Test$default.payment.next.month)
+```
+
+### CART Model
+
+```{r message = FALSE, warning=FALSE}
+CART <- rpart(default.payment.next.month ~., data=na_omit.Train)
+summary(CART)
+
+CART.tuned = tune.rpart(default.payment.next.month ~., data=na_omit.Train, cp = c(0.002,0.005,0.01,0.015))
+
+plot(CART.tuned)
+
+CART.best = rpart(default.payment.next.month ~., data=na_omit.Train, cp = 0.005)
+
+# Make a plot of the classification tree rules
+prp(CART.best)
+prp(CART)
+```
+
+```{r message = FALSE, warning=FALSE}
+# Summarize and plot the performance of the classification tree
+
+# Get the probability classes for CART model applied to test dataset
+predClassCART <- predict(CART, newdata = na_omit.Test, type = "class")
+
+predClassCART.best <- predict(CART.best, newdata = na_omit.Test, type = "class")
+```
+
+```{r message = FALSE, warning=FALSE}
+# Report confusion matrix from on the test dataset
+confusionMatrix(predClassCART, na_omit.Test$default.payment.next.month)
+
+confusionMatrix(predClassCART.best, na_omit.Test$default.payment.next.month)
+```
+
+Then plot ROC curves for the logistic regression, SVM, KNN, and CART models, and compare their performance.
+
+```{r}
+# KNN
+knn.20.prob = knn(train.gc, test.gc, train.def, k=20, prob=TRUE)
+knn.best.prob <-  knn(train.gc, test.gc, train.def, k=151, prob=TRUE)
+
+# CART model
+predProbCART <- predict(CART.best, newdata = na_omit.Test, type = "prob")[,2]
+
+# KNN model
+KNN.prob <- rep(0, length(knn.best.prob)) ## Initializing 
+KNN.20.prob = KNN.prob
+### we want to assign to knn_prob the probability that the passenger will survive 
+### (attr(knn_obj, 'prob')  is the proportion of the votes for the winning class
+### this means it will always be greater that 0.5 and may either be for survived or perished
+for(i in 1:length(KNN.prob)){
+  KNN.prob[i] <- ifelse(knn.best.prob[i] != "No", attr(knn.best.prob, 'prob')[i], 1 - attr(knn.best.prob, 'prob')[i])
+  KNN.20.prob[i] <- ifelse(knn.20.prob[i] != "No", attr(knn.20.prob, 'prob')[i], 1 - attr(knn.20.prob, 'prob')[i])
+}
+predProbKNN <- prediction(KNN.prob, na_omit.Test$default.payment.next.month)
+predProbKNN.20 <- prediction(KNN.20.prob, na_omit.Test$default.payment.next.month)
+KNN.ROC <- performance(predProbKNN, measure="tpr", x.measure="fpr")
+KNN.20.ROC = performance(predProbKNN.20, measure="tpr", x.measure="fpr")
+# CART model
+CART.ROC <- performance(prediction(predProbCART, na_omit.Test$default.payment.next.month), measure="tpr", x.measure="fpr")
+```
+
+Compute the AUC for the logistic regression, SVM, KNN, and CART models, and compare their performance.
+
+```{r}
+KNN.AUC <- performance(prediction(KNN.prob, na_omit.Test$default.payment.next.month), 
+                       measure="auc")@y.values
+
+KNN.20.AUC <- performance(prediction(KNN.20.prob, na_omit.Test$default.payment.next.month), 
+                       measure="auc")@y.values
+
+CART.AUC <- performance(prediction(predProbCART, na_omit.Test$default.payment.next.month), 
+                       measure="auc")@y.values
+```
+
+### Assignment Questions
+
+Provide a summary and discussion of your work in written form (.docx or .pdf) that includes the following:
+
+Q1 Summarize the model/feature selection process you used to fit your KNN and CART model.
+
+KNN Selection:
+
+To select K, I ran 10 fold cross validation on all k between 1 and 175. I wanted to compare and contrast the heuristic of sqrt(n_obs) to the choice of k at the elbow of the tuning error plot.
+
+Following comparison, the choice of k as 151 (sqrt(n_obs)) results in the highest AUC.
+
+CART Selection:
+
+I played with tuning the complexity parameter of rpart, but it didn't result in a different tree than just the default value of 0.01. But, it is something I will keep in mind moving forward.
+
+Q2 Provide a summary of the fitted KNN/CART models (i.e. model summary)
+
+```{r, eval=TRUE}
+summary(knn.best)
+```
+
+```{r,eval=TRUE}
+summary(CART)
+```
+
+Q3 Provide performance evaluation of the fitted KNN/CART models using confusion matrix.
+
+```{r,eval=TRUE}
+confusionMatrix(knn.best, na_omit.Test$default.payment.next.month)
+
+confusionMatrix(predClassCART, na_omit.Test$default.payment.next.month)
+```
+
+Here we see both KNN and CART fail to identify as many people that actually default compared to the best Logit model. (335d and 504 vs 512)
+
+Q4 How well do you think the fitted KNN/CART models to this dataset works?
+
+They both do reasonably well. Even though the AUC for the CART model is the lowest we have found, it does the best job of demonstrating particular predictor importance and is the most accessible model for a layperson.
+
+Q5 Using ROC curves and AUC, which one of logistic regression, SVM, KNN, and CART models works better with the dataset so far?
+
+```{r,eval=TRUE}
+### Plot our ROC Performance with Logit as base
+plot(Logit.ROC, lwd=2, main = "ROC Comparison for Models on Test Dataset")
+
+# Add SVM
+lines(attributes(SVM.ROC)$x.values[[1]], attributes(SVM.ROC)$y.values[[1]], 
+      col="red", lwd=2)
+
+# Add KNN
+lines(attributes(KNN.ROC)$x.values[[1]], attributes(KNN.ROC)$y.values[[1]], 
+      col="blue", lwd=2)
+
+lines(attributes(KNN.20.ROC)$x.values[[1]], attributes(KNN.20.ROC)$y.values[[1]], 
+      col="orange", lwd=2)
+
+# Add CART
+lines(attributes(CART.ROC)$x.values[[1]], attributes(CART.ROC)$y.values[[1]], 
+      col="green", lwd=2)
+
+#Add Legend
+legend(x=.5, y=.6, c("Logistic (Step)", "SVM", "KNN 151", "KNN 20", "CART"), 
+       col=c("black", "red", "blue","orange", "green"), lwd=c(2,2,2,2,2))
+```
+
+```{r,eval=TRUE}
+Logit.AUC.na_omit
+SVM.AUC.na_omit
+KNN.AUC 
+KNN.20.AUC
+CART.AUC
+```
+
+Logit remains the best model thus far.
+
+Submission Instructions
+
+For this weekly lab assignment, you should submit:
+
+An R script file (or Rmd file)
+
+A written summary/discussion of your work (as discussed above) in .docx or .pdf format.
+
+If you want to just summarize in a single Rmd file, please make sure you write your answer very clearly.
+
+##Week 7 Take-Home Lab Assignment
+
+Introduction
+
+For this week's take-home lab, you will work on the same data set from Week 4/5 Take-Home Labs. You will solve the very same problem studied in this week's in-class lab on a much larger and more interesting dataset. The data contained in the file UCI_Credit_Card.csv contains 30,000 consumer records with 24 different variables. You can read a detailed description of the different fields at the following website: <https://archive.ics.uci.edu/ml/datasets/default+of+credit+card+clients> The description from the UCI says marriage should have levels: Marital status (1 = married; 2 = single; 3 = others) However, there are levels (0,1,2,3). You should treat 0 as unknown. the description from the UCI says Education (1 = graduate school; 2 = university; 3 = high school; 4 = others). However, there are levels 1 to 6 for education. Thus here 5 = 6 = unknown. X6-X11: The measurement scale for the repayment status is: -1 = pay duly; 1 = payment delay for one month; 2 = payment delay for two months; . . .; 8 = payment delay for eight months; 9 = payment delay for nine months and above. However, there are many factors that are -2. This is also unknown. So every unknown you should treat them as NA.
+
+Your task is to build the best possible model for predicting whether or not a consumer will default on their credit card payment for the next month (the last column in the dataset). Assignment
+
+Perform the following tasks:
+
+Conduct a training/test split of the data, building a 20% held out test dataset
+
+### RF Model
+
+Fit the best RF model you can (consider feature selection etc.) to the data to predict consumer default.
+
+```{r}
+library(randomForest) 
+
+RandomForest <- randomForest(default.payment.next.month ~ ., data=na_omit.Train, importance = TRUE, ntrees = 500)
+summary(RandomForest)
+plot(RandomForest)
+```
+
+```{r}
+# Get the probability of "yes" for default from second column
+predProbRF <- predict(RandomForest, newdata = na_omit.Test, type = "prob")[,2]
+
+
+# Get the predicted class
+predClassRF <- predict(RandomForest, newdata = na_omit.Test, type = "response")
+```
+
+Then plot ROC curves for the logistic regression, SVM, KNN, CART, and RF models, and compare their performance.
+
+```{r}
+RF.ROC <- performance(prediction(predProbRF, na_omit.Test$default.payment.next.month), 
+                       measure="tpr", x.measure="fpr")
+```
+
+Compute the AUC for the logistic regression, SVM, KNN, CART, and RF models, and compare their performance.
+
+```{r}
+RF.AUC <- performance(prediction(predProbRF, na_omit.Test$default.payment.next.month), 
+                       measure="auc")@y.values
+```
+
+### Assignment Questions
+
+Provide a summary and discussion of your work in written form (.docx or .pdf) that includes the following:
+
+Q1 Summarize the model/feature selection process you used to fit your RF model.
+
+I didn't do anything fancy here, just let the package construct the model and compared it to my previous models.
+
+Q2 Provide a summary of the fitted RF model (i.e. model summary)
+
+```{r,eval=TRUE}
+summary(RandomForest)
+```
+
+Q3 Provide performance evaluation of the fitted RF model using confusion matrix.
+
+```{r,eval=TRUE}
+# Report confusion matrix from on the test dataset
+confusionMatrix(predClassRF , na_omit.Test$default.payment.next.month)
+```
+
+The RF model does not predict as many people that actually default as the Logit model. (473 vs 512)
+
+Q4 How well do you think the fitted RF model to this dataset works?
+
+RF looks to do just about as well as Logit or SVM. More on the tradeoff below.
+
+Q5 Using ROC curves and AUC, which one of logistic regression, SVM, KNN, CART, and RF models works better with the dataset over all?
+
+```{r,eval=TRUE}
+### Plot our ROC Performance with Logit as base
+plot(Logit.ROC, lwd=2, main = "ROC Comparison for Models on Test Dataset")
+
+# Add SVM
+lines(attributes(SVM.ROC)$x.values[[1]], attributes(SVM.ROC)$y.values[[1]], 
+      col="red", lwd=2)
+
+# Add KNN
+lines(attributes(KNN.ROC)$x.values[[1]], attributes(KNN.ROC)$y.values[[1]], 
+      col="blue", lwd=2)
+
+# Add CART 
+lines(attributes(CART.ROC)$x.values[[1]], attributes(CART.ROC)$y.values[[1]], 
+      col="green", lwd=2)
+
+# Add RF
+lines(attributes(RF.ROC)$x.values[[1]], attributes(RF.ROC)$y.values[[1]], 
+      col="Brown", lwd=2)
+
+#Add Legend
+legend(x=.5, y=.6, c("Logistic (Step)", "SVM", "KNN", "CART", "RF"), 
+       col=c("black", "red", "blue", "green", "Brown"), lwd=c(2,2,2,2,2))
+```
+
+```{r,eval=TRUE}
+Logit.AUC.na_omit
+SVM.AUC.na_omit
+KNN.AUC 
+CART.AUC
+RF.AUC
+```
+
+As we can see, Logit remains in first place, but RF has taken over 2nd place in performance. It is also very efficient in terms of computation time, but is significantly less interpretable than our basic partition tree.
+
+## Winter 24 Week 1 Take Home
+
+### Assignment
+
+Perform the following tasks:
+
+-   Conduct a training/test split of the data, building a 20% held out test dataset
+
+-   Update all your work from OA4106 incoorporating my comments (if there is any) for RF, logistic regression, KNN, CART, SVM models to the data to predict consumer default.
+
+-   Then you add ADABOOST from the "ada" package.
+
+```{r, eval=TRUE}
+library(ada)
+
+ADA <- ada(default.payment.next.month ~ ., data=na_omit.Train, iter = 100)
+summary(ADA)
+
+plot(ADA)
+```
+
+```{r, eval=TRUE}
+# Get the probability classes for Adaboost model applied to test dataset
+predADA <- predict(ADA, newdata = na_omit.Test, type =  "probs")
+predClassADA <- predict(ADA, newdata = na_omit.Test, type =  "vector")
+predProbADA <- predADA[,2]
+
+confusionMatrix(predClassADA, na_omit.Test$default.payment.next.month)
+```
+
+-   Then plot ROC curves for the logistic regression, SVM, KNN, CART, RF, adaboost models, and compare their performance.
+
+```{r}
+ADA.ROC <- performance(prediction(predProbADA, na_omit.Test$default), 
+                       measure="tpr", x.measure="fpr")
+
+### Plot our ROC Performance with Logit as base
+plot(Logit.ROC, lwd=2, main = "ROC Comparison for Models on Test Dataset")
+
+# Add SVM
+lines(attributes(SVM.ROC)$x.values[[1]], attributes(SVM.ROC)$y.values[[1]], 
+      col="red", lwd=2)
+
+# Add KNN
+lines(attributes(KNN.ROC)$x.values[[1]], attributes(KNN.ROC)$y.values[[1]], 
+      col="blue", lwd=2)
+
+# Add CART 
+lines(attributes(CART.ROC)$x.values[[1]], attributes(CART.ROC)$y.values[[1]], 
+      col="green", lwd=2)
+
+# Add RF
+lines(attributes(RF.ROC)$x.values[[1]], attributes(RF.ROC)$y.values[[1]], 
+      col="Brown", lwd=2)
+
+# Add adaboost
+lines(attributes(ADA.ROC)$x.values[[1]], attributes(ADA.ROC)$y.values[[1]], 
+      col="Pink", lwd=2)
+
+#Add Legend
+legend(x=.5, y=.6, c("Logistic (Step)", "SVM", "KNN", "CART", "RF", "ADA"), 
+       col=c("black", "red", "blue", "green", "Brown", "Pink"), lwd=c(2,2,2,2,2,2))
+```
+
+-   Compute the AUC for the logistic regression, SVM, KNN, CART, RF, adaboost models, and compare their performance.
+
+```{r}
+ADA.AUC <- performance(prediction(predProbADA, na_omit.Test$default.payment.next.month), 
+                       measure="auc")@y.values
+
+Logit.AUC.na_omit
+SVM.AUC.na_omit
+KNN.AUC 
+CART.AUC
+RF.AUC
+ADA.AUC
+```
+
+### Questions
+
+-   Provide a summary and discussion of your work in written form (.docx or .pdf) that includes the following:
+
+    -   Q1 Summarize the model/feature selection process you used to fit your ADA model
+
+Fit the model with 100 iterations
+
+    -   Q2 Provide a summary of the fitted ADABOOST model (i.e. model summary)
+    
+```{r, eval=TRUE}
+summary(ADA)
+```
+
+    -   Q3 Provide performance evaluation of the fitted ADABOOST model using confusion matrix.
+    
+```{r, eval=TRUE}
+confusionMatrix(predClassADA, na_omit.Test$default.payment.next.month)
+```
+
+
+    -   Q4 How well do you think the fitted ADABOOST model to this dataset works?
+    
+Based on the confusion matrix, it looks like ADABOOST performs roughly as well as logit, but with higher sensitivity and lower specificity, so it predicts defaults more frequently which would lower the default risk to the bank but may impact profits.
+
+    -   Q5 Using ROC curves and AUC, which one of logistic regression, SVM, KNN, CART, RF, and ADABOOST models works better with the dataset over all?
+    
+```{r,eval=TRUE}
+### Plot our ROC Performance with Logit as base
+plot(Logit.ROC, lwd=2, main = "ROC Comparison for Models on Test Dataset")
+
+# Add SVM
+lines(attributes(SVM.ROC)$x.values[[1]], attributes(SVM.ROC)$y.values[[1]], 
+      col="red", lwd=2)
+
+# Add KNN
+lines(attributes(KNN.ROC)$x.values[[1]], attributes(KNN.ROC)$y.values[[1]], 
+      col="blue", lwd=2)
+
+# Add CART 
+lines(attributes(CART.ROC)$x.values[[1]], attributes(CART.ROC)$y.values[[1]], 
+      col="green", lwd=2)
+
+# Add RF
+lines(attributes(RF.ROC)$x.values[[1]], attributes(RF.ROC)$y.values[[1]], 
+      col="Brown", lwd=2)
+
+# Add adaboost
+lines(attributes(ADA.ROC)$x.values[[1]], attributes(ADA.ROC)$y.values[[1]], 
+      col="Pink", lwd=2)
+
+#Add Legend
+legend(x=.5, y=.6, c("Logistic (Step)", "SVM", "KNN", "CART", "RF", "ADA"), 
+       col=c("black", "red", "blue", "green", "Brown", "Pink"), lwd=c(2,2,2,2,2,2))
+
+Logit.AUC.na_omit
+SVM.AUC.na_omit
+KNN.AUC 
+CART.AUC
+RF.AUC
+ADA.AUC
+```
+
+Based on the curves and AUC numbers, ADABoost is the top performing model quantitatively however it is very close to logit. Choice between them would depend on the nuances of profit margins if the bank wants to approve more loans overall (using logit) or minimize default risk (using ADABoost).
+
+#### Submission Instructions
+
+For this weekly lab assignment, you should submit:
+
+-   An R script file (or Rmd file)
+
+-   A written summary/discussion of your work (as discussed above) in .docx or .pdf format.
+
+If you want to just summarize in a single Rmd file, please make sure you write your answer very clearly.
