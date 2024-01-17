@@ -1,0 +1,148 @@
+---
+title: "Week 2 Take Home Lab"
+author: "Sam Fritz-Schreck"
+date: "2024-01-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(arulesViz)
+library(tidyverse)
+library(readxl)
+#install and load knitr
+#install.packages("knitr")
+library(knitr)
+#load ggplot2 as it comes in tidyverse
+library(ggplot2)
+#install and load lubridate
+#install.packages("lubridate")
+library(lubridate)
+#install and load plyr
+#install.packages("plyr")
+library(plyr)
+library(dplyr)
+
+# Create an item frequency plot for the top 20 items
+if (!require("RColorBrewer")) {
+  # install color package of R
+install.packages("RColorBrewer")
+#include library RColorBrewer
+library(RColorBrewer)
+}
+```
+
+###  Introduction
+
+In this lab, you’ll use the techniques we studied this week to perform two analyses that have application in a military/DoD context:
+
+  * A “market basket” analysis to determine factors that are often associated with items of interest (in a military context this might be Soldier suicides or Traumatic Brain Injuries, known as TBI)
+
+
+We will use some open source datasets as a proxy for data seen in these military problems.
+
+Before beginning the lab below, use the RStudio IDE file management pane (lower right quadrant) to upload the titanic.raw.rdata folder onto your Rstudio instance.
+
+
+
+#### Market Basket Analysis
+
+The rdata file named titanic.raw.rdata is an R Workspace file that contains saved R objects (in this case a dataframe containing information about passengers aboard the Titanic).
+
+  1. Import the R workspace file named titanic.raw by using the following menu options in the RStudio IDE: Session -> Load Workspace. Then select the titanic.raw.rdata file.
+
+  2. Take a look at data you have loaded (use the command below to see the first few lines; use the data viewer in the top-right corner of the IDE to see all the data). This is simply a dataframe that contains categorical information about each person aboard the Titanic on the night it sunk, to include whether or not they survived.
+
+```{R warning=FALSE}
+load("titanic.raw.rdata")
+head(titanic.raw)
+```
+
+  3. Convert the dataframe into a transactions data type for use with the arules R package.
+  
+```{R warning=FALSE}
+library(arules)
+class(data)
+
+titanic.data<-as(titanic.raw, "transactions")
+```
+  4. Use the arules R package for Association Rule Mining (ARM) to analyze survival rates for people on the Titanic. Develop a unique set of rules that desribe survival and death rates.
+  
+```{r}
+itemFrequencyPlot(titanic.data,topN=20,type="absolute",col=brewer.pal(8,'Pastel2'), main="Absolute Item Frequency Plot")
+```
+
+```{r}
+# Min Support as 0.001, confidence as 0.8.
+association.rules <- apriori(titanic.data, parameter = list(supp=0.001, conf=0.8), appearance = list(default = "lhs", rhs=c("Survived=Yes","Survived=No")))
+```
+
+```{r}
+summary(association.rules)
+```
+
+```{r}
+inspect(association.rules)
+```
+
+```{r}
+# Filter rules with confidence greater than 0.4 or 40%
+subRules<-association.rules[quality(association.rules)$confidence>0.4]
+
+plot(subRules,method="two-key plot")
+```
+
+```{r}
+subRules <- head(subRules, n = 15, by = "confidence")
+
+plot(association.rules, method = "graph",  engine = "htmlwidget")
+```
+
+```{r}
+# Filter top 20 rules with highest lift
+subRules2<-head(subRules, n=20, by="lift")
+plot(subRules2, method="paracoord")
+```
+
+
+  5. Refer to the “arulesViz: Interactive Visualization of Association Rules with R” reading assignment you completed for this week’s lecture. Use the arulesVIz R package to build the different visualizations illustrated in these documents. Which one of these visualizations do you think is best used to desribe what happened in the Titanic disaster?
+  
+### Market Basket Lab Submission
+
+##### For your consolidated lab submssion, you will need provide the following products and answers to the following questions:
+
+  a. Provide a neat and organized table (sorted in the order you think is most appropriate) that illustrates the set of association rules you’ve developed to describe survival (or not) in the Titanic disaster. Briefly describe why you feel this order is most appropriate?
+  
+```{r}
+# Set options for displaying data frames in markdown
+options(
+  knitr.table.format = "html",  # Use HTML format for tables
+  max.print = 100,               # Set the maximum number of rows to display
+  width = 1000                   # Set the width of each column
+)
+
+rules.df = as(association.rules, "data.frame")
+
+# Create an order vector based on whether the first column ends with "{Survived=No}"
+order_vector <- order(grepl("\\{Survived=No\\}$", rules.df[, 1]), rules.df[,3])
+
+# Reverse the order
+order_vector <- rev(order_vector)
+
+# Reorder the data frame
+rules_sorted <- rules.df[order_vector, ]
+
+# Display the sorted data frame
+print(rules_sorted)
+```
+
+
+  b. Provide the visualization that you think is best used to explain the association rules for survival and death in the Titanic disaster. You may provide more than one visualization if you choose. The goal is to provide a visual description for what happened.
+  
+```{r}
+plot(association.rules, method = "graph",  engine = "htmlwidget")
+```
+  
+
+  c. Write a brief paragraph that references your visualization and the association rules table developed above to explain factors associated with both survival and death during the Titanic disaster (and note that this approach could easily be applied to many binary outcomees in the DoD such as Soldier suicide, casualty rates, etc.). This brief writeup should be worded in a way that would be appropriate for briefing a senior leader on the analysis of some phenomenon of interest in the DoD.
+

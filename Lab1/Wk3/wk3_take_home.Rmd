@@ -1,0 +1,82 @@
+---
+title: "Wk3 Take Home"
+author: "Sam Fritz-Schreck"
+date: "2024-01-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(mapview)
+library(sf)
+library(censusxy)
+#remotes::install_github("JanCaha/r_package_qgis")
+library(qgisprocess)
+```
+
+
+## Introduction
+
+In this lab, you’ll use the techniques we studied this week to perform two analyses that have application in a military/DoD context:
+
+    A kernel density analysis of criminal events (IED attacks, ambushes, etc.) in order to build predictive “threat maps” that illustrate the expected locations of future enemy attacks (a frequently applied technique in the intelligence and combat engineer domains).
+
+We will use some open source datasets as a proxy for data seen in these military problems.
+
+Before beginning the lab below, use the RStudio IDE file management pane (lower right quadrant) to upload the Lab3.zip file onto your Rstudio instance.
+Kernel Density Estimation for Building Threat Maps
+
+The zip folder you were provided contains two shapefiles:
+
+    The shapefile Burglaries2008.shp contains more than 3000 burglaries committed in the city of Pittsburgh during the year 2008
+
+    The shapefile PolicePrecincts.shp contains a polygon shape layer for the Police Precincts in the City of Pittsburgh
+
+We will use these shapefiles as a proxy for the problem in a military context of developing an estimate for the underlying pattern of enemy attacks in an area of interest.
+
+    Import the data into your environment using the following code:
+
+
+```{r}
+Burglaries<-read_sf(getwd(),"Burglaries2008")
+Precincts<-read_sf(getwd(), "PolicePrecincts")
+```
+
+    Now, subset the Burglary data into a “training” period containing the first 100 burlaries and a test period containing the second 100 burglaries using the following code:
+
+```{r}
+BurglariesTrain <- Burglaries[1:100,]
+BurglariesTest  <- Burglaries[101:200,]
+```
+
+    Build a heat map using the first 100 burglaries and overlay burglaries 101-200 on top. Does the “predicted” distribution seem to fit well?
+    
+```{r}
+
+```
+
+    Build another heat map using the first 200 burglaries to predict the third 100. Does the “predicted” distribution seem to fit well in this case?
+    
+```{r}
+
+```
+
+    Now, buid another heat map using the first 1000 burglaries to predict bugrlaries 1001 - 1500. What is happening to your map visualization (you are welcome to explore what happens as you sequentially add more and more burglaries to the analysis)?
+
+```{r}
+
+```
+
+## Kernel Density Lab Submission
+For your consolidated lab submssion, you will need provide the following products and answers to the following questions:
+
+    Provide the heatmap generated using the first 100 burglaries with the second 100 burglaries overlaid (if you build an interactive one you will need to provide a screenshot). Comment on how well you think you have estimated the distribution of burglaries based on this result. Consider adjusting the colors/palettes of your heatmap to make a more professional product.
+
+    Provide the heatmap generated using the first 200 burglaries with burglaries 201 - 300 overlaid (if you build an interactive one you will need to provide a screenshot). Does this seem to improve the fit? Is anything else happening?
+
+    Provide a screenshot (or screenshots) to capture what happens as you keep adding more and more burglaries to your multivariate distribution estimation procedure. What is happening to your maps and why?
+
+    Bonus Question (worth up to 5 points): If you had to build a map for your boss to look at using the entire year’s worth of burglaries, what would you do (and please provide the map)? We will discuss this in class the week after your lab is due.
+
+Submit both a .pdf or .docx file that provides graphics and discussion for the questions above (note that this will be a consolidated product containing results from multiple lab weeks) and a .R code file named YourLastName_ARM_KD.R containing the code you used to analyze both the Titanic Disaster and the Pittsburgh Burlaries.
