@@ -1,0 +1,131 @@
+---
+title: "Wk3 KDE"
+output: html_document
+date: "2024-01-17"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(mapview)
+library(sf)
+#library(censusxy)
+# remotes::install_github("JanCaha/r_package_qgis")
+library(qgisprocess)
+
+library(raster)
+library(RColorBrewer)
+qgis_configure()
+
+```
+
+
+## Take Home Lab
+
+### Introduction
+
+In this lab, you'll use the techniques we studied this week to perform two analyses that have application in a military/DoD context:
+
+A kernel density analysis of criminal events (IED attacks, ambushes, etc.) in order to build predictive "threat maps" that illustrate the expected locations of future enemy attacks (a frequently applied technique in the intelligence and combat engineer domains). We will use some open source datasets as a proxy for data seen in these military problems.
+
+Before beginning the lab below, use the RStudio IDE file management pane (lower right quadrant) to upload the Lab3.zip file onto your Rstudio instance.
+
+Kernel Density Estimation for Building Threat Maps The zip folder you were provided contains two shapefiles:
+
+The shapefile Burglaries2008.shp contains more than 3000 burglaries committed in the city of Pittsburgh during the year 2008
+
+The shapefile PolicePrecincts.shp contains a polygon shape layer for the Police Precincts in the City of Pittsburgh
+
+We will use these shapefiles as a proxy for the problem in a military context of developing an estimate for the underlying pattern of enemy attacks in an area of interest.
+
+### 1.  Import the data into your environment using the following code:
+
+```{r}
+Burglaries<-read_sf(getwd(),"Burglaries2008")
+Precincts<-read_sf(getwd(), "PolicePrecincts")
+```
+
+### 2. Now, subset the Burglary data into a “training” period containing the first 100 burlaries and a test period containing the second 100 burglaries using the following code:
+
+```{r}
+BurglariesTrain <- Burglaries[1:100,]
+BurglariesTest  <- Burglaries[101:200,]
+```
+
+### 3. Build a heat map using the first 100 burglaries and overlay burglaries 101-200 on top. Does the “predicted” distribution seem to fit well?
+
+```{r}
+resultsBur.train <- st_as_sf(BurglariesTrain, coords=c("Longitude", "Latitude"), crs=4269,agr="constant")
+resultsBur.train.proj<-st_transform(resultsBur.train,
+                              crs = 2278)
+resultsBur.test <- st_as_sf(BurglariesTest, coords=c("Longitude", "Latitude"), crs=4269,agr="constant")
+resultsBur.test.proj<-st_transform(resultsBur.test,
+                              crs = 2278)
+
+BURG_dens<-qgis_run_algorithm(algorithm ="qgis:heatmapkerneldensityestimation",
+         INPUT=resultsBur.train.proj,
+         RADIUS = 5000,
+         PIXEL_SIZE = 100,
+         KERNEL = 0,
+         OUTPUT=file.path(getwd(), "burgdenst.TIF"),
+         load_output = TRUE)
+result<- qgis_as_raster(BURG_dens)
+projection(result)<-crs(resultsBur.train.proj)
+mapview(result)+mapview(resultsBur.test.proj)
+```
+
+As there are an equal number of observations in the underlying heat map and the test projection, the fit is off in some areas. Likely, it will start to get better when we get to more of an 80/20 ratio.
+
+### 4. Build another heat map using the first 200 burglaries to predict the third 100. Does the “predicted” distribution seem to fit well in this case?
+
+```{r}
+BurglariesTrain <- Burglaries[1:200,]
+BurglariesTest  <- Burglaries[201:300,]
+
+resultsBur.train <- st_as_sf(BurglariesTrain, coords=c("Longitude", "Latitude"), crs=4269,agr="constant")
+resultsBur.train.proj<-st_transform(resultsBur.train,
+                              crs = 2278)
+resultsBur.test <- st_as_sf(BurglariesTest, coords=c("Longitude", "Latitude"), crs=4269,agr="constant")
+resultsBur.test.proj<-st_transform(resultsBur.test,
+                              crs = 2278)
+
+BURG_dens<-qgis_run_algorithm(algorithm ="qgis:heatmapkerneldensityestimation",
+         INPUT=resultsBur.train.proj,
+         RADIUS = 5000,
+         PIXEL_SIZE = 100,
+         KERNEL = 0,
+         OUTPUT=file.path(getwd(), "burgdenst.TIF"),
+         load_output = TRUE)
+result<- qgis_as_raster(BURG_dens)
+projection(result)<-crs(resultsBur.train.proj)
+mapview(result)+mapview(resultsBur.test.proj)
+```
+
+Here we see even at a 66/33 ratio, the fit is starting to get pretty good. We still have a few observations that are outside the heat map or areas in the heat map with no test observations projected over it but this fit looks much better than the previous 50/50 split.
+
+### 5. Now, buid another heat map using the first 1000 burglaries to predict bugrlaries 1001 - 1500. What is happening to your map visualization (you are welcome to explore what happens as you sequentially add more and more burglaries to the analysis)?
+
+```{r}
+BurglariesTrain <- Burglaries[1:1000,]
+BurglariesTest  <- Burglaries[1001:1500,]
+
+resultsBur.train <- st_as_sf(BurglariesTrain, coords=c("Longitude", "Latitude"), crs=4269,agr="constant")
+resultsBur.train.proj<-st_transform(resultsBur.train,
+                              crs = 2278)
+resultsBur.test <- st_as_sf(BurglariesTest, coords=c("Longitude", "Latitude"), crs=4269,agr="constant")
+resultsBur.test.proj<-st_transform(resultsBur.test,
+                              crs = 2278)
+
+BURG_dens<-qgis_run_algorithm(algorithm ="qgis:heatmapkerneldensityestimation",
+         INPUT=resultsBur.train.proj,
+         RADIUS = 5000,
+         PIXEL_SIZE = 100,
+         KERNEL = 0,
+         OUTPUT=file.path(getwd(), "burgdenst.TIF"),
+         load_output = TRUE)
+result<- qgis_as_raster(BURG_dens)
+projection(result)<-crs(resultsBur.train.proj)
+mapview(result)+mapview(resultsBur.test.proj)
+```
+
+Here we are still at a 66/33 split between heat map data and the projected test data but with 5x the data. Due to the increase in number of observations, we can see that the underlying distribution is starting to get well mapped.However, we are losing some granularity that we had in the previous 300 observation visualization. This is a trade off that we would need to deliberately evaluate as we decide on the appropriate number of observations to fit the underlying distribution. As this is time series data, we would likely want to set the threshold of the number of previous burglaries to fit the heat map to predict future burglary hot spots.
