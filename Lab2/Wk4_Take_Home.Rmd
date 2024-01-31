@@ -1,0 +1,177 @@
+---
+title: "Wk4_Take_Home_NLP"
+author: "Sam Fritz-Schreck"
+date: "2024-01-31"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(twitteR)
+library(stringr)
+library(syuzhet)
+library(tm)
+library(stopwords)
+library(ggplot2)
+library(gridExtra)
+library(wordcloud)
+
+amazonDF <- read.csv("amazon.csv", header = TRUE, stringsAsFactors = FALSE)  # make sure we get strings not factors!
+# head(amazonDF)
+```
+
+## Using REGEX to Perform Frequency-Based Text Analysis
+
+```{r}
+# write up a tokenizer function - won't work correctly on terms like "Los Angeles"
+tokenizer <- function(sometext){
+  words <- gsub("[.,:;?!]", "", sometext)  # remove punctuation
+  tokens <- unlist(str_split(words, " "))    # tokenize on whitespace
+  return(tokens)
+}
+
+token_list <- list()
+
+for (i in 1:length(amazonDF$review_content)){
+  item <- amazonDF$review_content[i]  
+  token_list[[i]] <- tokenizer(item)
+}
+
+token_list = lapply(token_list, tolower)
+
+word_freq <- function(a.list){
+  items <- unlist(a.list)
+  counts <- data.frame(table(items))
+  sorted <- counts[order(-counts$Freq),]
+  return(sorted)
+}
+
+words_df <- word_freq(token_list)
+dim(words_df)
+words_df <- words_df[!words_df$items %in% stopwords('en', 'smart'),] # get rid of stopwords
+dim(words_df)  # note we got smaller
+head(words_df,10)
+```
+
+### What are the top 10 frequent “useful” and “interesting” words in Amazon review?
+
+```{r}
+additional_stopwords <- c(" ", "", '1','2','3','4','5','6','7','8','9','10')      # ID some other junk in there (iterative process)
+words_df <- words_df[!words_df$items %in% additional_stopwords,]  #...and get rid of it
+head(words_df,10)
+```
+
+### Build a wordcloud of Amazon reviews.
+
+```{r}
+#build a wordcloud 
+wordcloud(words = words_df$items, freq = words_df$Freq, min.freq = 1,
+          max.words=150, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+```
+
+## Sentiment Analysis of Amazon Reviews
+
+```{r}
+reviews_only = amazonDF$review_content
+#head(reviews_only)
+reviews_only = gsub("http.[^ ]*", "",reviews_only) 
+reviews_only = gsub("https.[^ ]*", "",reviews_only)
+#head(reviews_only)
+```
+
+
+### Compute mean and median of sentiment scores of reviews? From them what do you think are they overall positive or negative?
+
+```{r}
+sentiment_df <- get_sentiment(reviews_only)
+mean(sentiment_df)
+median(sentiment_df)
+```
+
+
+### Plot density of sentiment scores.
+
+```{r}
+# Generate a kernel density plot of the resulting sentiment
+sentiment_density <- density(sentiment_df)     # accepting defaults
+plot(sentiment_density, xlim=c(-5,35), , main = 'Sentiment Scores for Amazon reviews')
+polygon(sentiment_density, col="blue", border="blue")
+```
+
+
+### Plot densities of positive, strongly positive, negative and strongly negative sentiment scores.
+
+```{r}
+# Isolate strongly positive tweets 
+sentiment_density <- density(sentiment_df[sentiment_df > 10])     # accepting defaults
+plot(sentiment_density, xlim=c(-5,35), , main = 'Strongly Positive Sentiment Scores for Amazon reviews')
+polygon(sentiment_density, col="blue", border="blue")
+```
+
+```{r}
+sentiment_density <- density(sentiment_df[sentiment_df > 0])     # accepting defaults
+plot(sentiment_density, xlim=c(-5,35), , main = 'Positive Sentiment Scores for Amazon reviews')
+polygon(sentiment_density, col="blue", border="blue")
+```
+
+```{r}
+sentiment_density <- density(sentiment_df[sentiment_df < 0])     # accepting defaults
+plot(sentiment_density, xlim=c(-5,5), , main = 'Negative Sentiment Scores for Amazon reviews')
+polygon(sentiment_density, col="blue", border="blue")
+```
+
+```{r}
+min(sentiment_df)
+```
+
+There are no strongly negative sentiment reviews below -1.
+
+### Plot two wordclouds: One wordcloud for your list of words with positive sentiment scores and another wordcloud for your list of words with negative sentiment scores.
+
+```{r}
+# Isolate positive reviews
+positive_tweets <- cbind(sentiment_df[sentiment_df > 0], amazonDF$review_content[sentiment_df > 0])
+token_list <- list()
+
+for (i in 1:length(positive_tweets[,2])){
+  item <- positive_tweets[i,2]  
+  token_list[[i]] <- tokenizer(item)
+}
+
+token_list = lapply(token_list, tolower)
+
+words_df <- word_freq(token_list)
+words_df <- words_df[!words_df$items %in% stopwords('en', 'smart'),]
+
+additional_stopwords <- c(" ", "", '1','2','3','4','5','6','7','8','9','10')      # ID some other junk in there (iterative process)
+words_df <- words_df[!words_df$items %in% additional_stopwords,]
+
+wordcloud(words = words_df$items, freq = words_df$Freq, min.freq = 1,
+          max.words=150, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+```
+
+```{r}
+# Isolate negative reviews
+negative_tweets <- cbind(sentiment_df[sentiment_df < 0], amazonDF$review_content[sentiment_df < 0])
+token_list <- list()
+
+for (i in 1:length(negative_tweets[,2])){
+  item <- negative_tweets[i,2]  
+  token_list[[i]] <- tokenizer(item)
+}
+
+token_list = lapply(token_list, tolower)
+
+words_df <- word_freq(token_list)
+words_df <- words_df[!words_df$items %in% stopwords('en', 'smart'),]
+
+additional_stopwords <- c(" ", "", '1','2','3','4','5','6','7','8','9','10')      # ID some other junk in there (iterative process)
+words_df <- words_df[!words_df$items %in% additional_stopwords,]
+
+wordcloud(words = words_df$items, freq = words_df$Freq, min.freq = 1,
+          max.words=150, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+```
+

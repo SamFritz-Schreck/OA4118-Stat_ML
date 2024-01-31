@@ -66,7 +66,7 @@ class(data)
 
 titanic.data<-as(titanic.raw, "transactions")
 ```
-  4. Use the arules R package for Association Rule Mining (ARM) to analyze survival rates for people on the Titanic. Develop a unique set of rules that desribe survival and death rates.
+  4. Use the arules R package for Association Rule Mining (ARM) to analyze survival rates for people on the Titanic. Develop a unique set of rules that describe survival and death rates.
   
 ```{r}
 itemFrequencyPlot(titanic.data,topN=20,type="absolute",col=brewer.pal(8,'Pastel2'), main="Absolute Item Frequency Plot")
@@ -144,5 +144,6 @@ plot(association.rules, method = "graph",  engine = "htmlwidget")
 ```
   
 
-  c. Write a brief paragraph that references your visualization and the association rules table developed above to explain factors associated with both survival and death during the Titanic disaster (and note that this approach could easily be applied to many binary outcomees in the DoD such as Soldier suicide, casualty rates, etc.). This brief writeup should be worded in a way that would be appropriate for briefing a senior leader on the analysis of some phenomenon of interest in the DoD.
+  c. Write a brief paragraph that references your visualization and the association rules table developed above to explain factors associated with both survival and death during the Titanic disaster (and note that this approach could easily be applied to many binary outcomes in the DoD such as Soldier suicide, casualty rates, etc.). This brief writeup should be worded in a way that would be appropriate for briefing a senior leader on the analysis of some phenomenon of interest in the DoD.
 
+The plot provides the best ability to see the associations for survival. As you can see, if the passenger was crew, 1st class, Female (any class), or a child (any class), those factors resulted in survival. If the passenger was an adult male in 2nd or 3rd class, they would be associated with death during the disaster.
