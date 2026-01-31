@@ -1,0 +1,3 @@
+#OA4118 Statistical and Machine Learning
+
+This course introduces the art and science of statistical and machine learning to find patterns in large and "Big" data. The focus is on the strengths and weaknesses of learning techniques and their implementation. We cover the fundamental ideas common to learning methods and introduce supervised/unsupervised techniques including: re-sampling methods, advanced clustering and visualization, tree-based ensembles, stochastic gradient boosting, deep neural networks, auto-encoding and other dimension reduction techniques, and applications to natural language processing. The software package Rand high-performance parallel or distributed computing will be used to demonstrate these methods.
