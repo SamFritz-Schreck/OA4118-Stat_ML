@@ -1,0 +1,391 @@
+---
+title: "Wk5_Take_Home"
+author: "Sam Fritz-Schreck"
+date: "2024-02-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(RecordLinkage)
+```
+
+# Applying Distance/Similarity Measures
+
+In this lab, you’ll apply distance and similarity measures discussed this week to solve two practical, real-world problems:
+
+Entity Resolution: you will conduct entity resolution to identify records that match between two entity spreadsheets.
+
+Finding Similar Documents: you will develop a method for helping NPS thesis students find references that are applicable to their research work
+
+Important Note: The problems you are attempting to solve for this lab are both straightforward (easy to understand the goal) but the solutions to them are very complex, with a vast decision space to explore for possible solutions. It is highly recommended that for each problem you first implement a simple and straightforward approach that completely solves the problem and then iteratively improve your solution with more sophisticated approaches as time allows.
+
+## Practical Entity Resolution
+
+```{r, warning=FALSE}
+getwd()
+library(data.table)
+df_A = read_csv('./WK5LabData/ERData/ASample.csv',col_types = cols(.default = col_character()))
+df_B = read_csv('./WK5LabData/ERData/BSample.csv',col_types = cols(.default = col_character()))
+
+
+setnames(df_A, old=colnames(df_A), new = c('ID','SSN','First','Middle','Last','Add_Num', 'Street', 'Apt_Num', 'City', 'State', 'Zip'))
+setnames(df_B, old=colnames(df_B), new = c('ID','SSN','First','Middle','Last','Add_Num', 'Street', 'Apt_Num', 'City', 'State', 'Zip'))
+summary(df_A)
+summary(df_B)
+```
+
+
+The datasets zip file you were provided for this lab contains a folder named ER_Datasets containing two .csv files named ASample and BSample. Each of these spreadsheets contains (synthetic) records of people in a similar format. Your task is to write a function that performs the following tasks:
+
+    Your function should take as inputs (function arguments) the names of two dataframes (you may add additional arguments such as specifying the distance measure to use if you wish)
+
+    Your function should calculate a score for each of the possible matches between the entities in the two spreadsheets.
+
+    Your function should return a sorted dataframe in descending order of the recommended matches (i.e. the best matches should appear first in the dataframe)
+
+    Fields/attributes used to match the entities should be included in your output for manual review by humans (i.e. you should group the two last names together, the two first names together, etc., so that humans can review your assorted recommended matches)
+    
+```{r}
+comparisons = compare.linkage(df_A, df_B, blockfld = c(3,5), exclude = c(1,4,6:11), strcmp = T)
+```
+    
+
+It is up to you to determine the exact details of how your function wll be implemented. For your lab submission, you should apply your function to the task of matching the two dataframes above. Please provde the following:
+
+    In your written submssion, provide a brief overview/discussion of the approach/scoring function you are applying in your function (i.e. defend/argue for your solution). Which fields (if any) are you blocking on and why?
+
+    In your written submisson, provide the number of comparisons your function performs when applied to this dataset.
+    
+```{r}
+summary(comparisons)
+```
+    
+
+    In your written report, assert how many matches do you believe there are between the two spreadsheets (note that you may perform manual review of the results returned by your function).
+    
+```{r}
+scores = comparisons$pairs
+results.list <- list()
+for (i in 1:length(scores$id1)){
+  results.list[[i]]<-c(sum(scores[i,c(3:5)]),                    # total score calculated by summing pairs columns
+                       scores$SSN[i],                       
+                       df_A$SSN[scores$id1[i]],       
+                       df_B$SSN[scores$id2[i]]
+  )
+}
+
+results<-data.frame(do.call(rbind, results.list), stringsAsFactors=FALSE)
+colnames(results)<-c("Score", "SSN_Score", "SSN1", "SSN2")
+
+results$Score <- as.numeric(results$Score)/3    # divide by the number of columns we used for fuzzy matching
+
+results <- results[order(results$Score),]
+results
+```
+    
+
+    Provide the code used to conduct the analysis above, to include your function being implemented on the datasets above.
+
+    Attach a spreadsheet named YourLastName_FirstInitial_ERResults.csv that contains the output produced by your function when applied to the two spreadsheets.
+    
+### Function
+```{r}
+EntityRes = function(df_A,df_B){
+  #standardize columns
+  setnames(df_A, old=colnames(df_A), new = c('ID','SSN','First','Middle','Last','Add_Num', 'Street', 'Apt_Num', 'City', 'State', 'Zip'))
+  setnames(df_B, old=colnames(df_B), new = c('ID','SSN','First','Middle','Last','Add_Num', 'Street', 'Apt_Num', 'City', 'State', 'Zip'))
+  
+  #conduct comparisons blocking on First and Last names
+  comparisons = compare.linkage(df_A, df_B, blockfld = c(3,5), exclude = c(1,4,6:11), strcmp = T)
+  
+  #construct return dataframe
+  scores = comparisons$pairs
+  results.list <- list()
+  for (i in 1:length(scores$id1)){
+    results.list[[i]]<-c(sum(scores[i,c(3:5)]),                    # total score calculated by summing pairs columns
+                         scores$SSN[i],                       
+                         df_A$SSN[scores$id1[i]],       
+                         df_B$SSN[scores$id2[i]]
+    )
+  }
+  
+  results<-data.frame(do.call(rbind, results.list), stringsAsFactors=FALSE)
+  colnames(results)<-c("Score", "SSN_Score", "SSN1", "SSN2")
+  
+  results$Score <- as.numeric(results$Score)/3    # divide by the number of columns we used for fuzzy matching
+  
+  results <- results[order(results$Score),]
+  
+  return(results)
+}
+
+EntityRes(df_A,df_B)
+```
+
+### Questions
+
+In your written submssion, provide a brief overview/discussion of the approach/scoring function you are applying in your function (i.e. defend/argue for your solution). Which fields (if any) are you blocking on and why?
+
+I manually reviewed the two dataframes and saw that possibly all columns have typos, as such I decided to block on first and last names to attempt to resolve SSN discrepancies. However, since there are only two documents, I cant be sure which SSN is correct. Real world, I would attempt to source a third dataset to apply majority rule.
+
+In your written submisson, provide the number of comparisons your function performs when applied to this dataset.
+
+```{r}
+summary(comparisons)
+```
+
+In your written report, assert how many matches do you believe there are between the two spreadsheets (note that you may perform manual review of the results returned by your function).
+
+There are definitely more than 42 matches in this document as I am blocking on such a restrictive set of columns. I could have alternatively chose to not block on any columns but that would be much more combinatorically intensive.
+
+## Finding Similar Items (Documents)
+
+```{r}
+library(text2vec)
+library(ggplot2)
+library(stringr)
+library(stopwords)
+library(superheat)
+
+
+```
+
+
+The zip folder of datasets you were provided for this lab contains a folder named FindDocuments. In that folder there is a .csv file containing information on every thesis completed at NPS for the last 40 years (or so). In addition, there are 17 text documents containing thesis proposals by current NPS students. Your goal is to develop the “back end” for a recommendation system that students can use to find previously written theses that should serve as references they should explore for their thesis work. Perform the following analysis:
+
+    Choose one of the thesis proposals to serve as examples (pick one in an area of interest to you)
+    
+```{r}
+proposal = read.table("./WK5LabData/FindDocuments/W17_4.txt", sep="\t")
+
+thesis_data = read.csv("./WK5LabData/FindDocuments/NPSTheses.csv")
+
+prep_fun = function(x) {
+  x %>% 
+    # make text lower case
+    str_to_lower %>% 
+    # remove non-alphanumeric symbols
+    str_replace_all("[^[:alnum:]]", " ") %>% 
+    # collapse multiple spaces
+    str_replace_all("\\s+", " ")
+}
+
+my_corpus = prep_fun(thesis_data$abstract)
+
+my_corpus_it = itoken(my_corpus, progressbar = FALSE)
+v = create_vocabulary(my_corpus_it, stopwords = stopwords('en')) %>%  # note the removal of stopwords here
+    prune_vocabulary(doc_proportion_max = 0.05, term_count_min = 5)   # set some thresholds for minimum occurrence
+vectorizer = vocab_vectorizer(v)                  
+my_corpus_dtm<-create_dtm(my_corpus_it, vectorizer)   # build a DTM
+dim(my_corpus_dtm)  
+
+query_prep<-prep_fun(proposal)
+query_it <- itoken(query_prep, progressbar = FALSE)
+query_dtm<-create_dtm(query_it, vectorizer)
+dim(query_dtm)
+
+dtm_words <- colnames(query_dtm)
+query_words <- dtm_words[as.numeric(query_dtm > 0) > 0]
+query_words
+
+jaccard_sim <- as.vector(sim2(query_dtm, my_corpus_dtm, method = "jaccard", norm = "none"))
+
+#Organize our results
+jaccard_results <- cbind(thesis_data, jaccard_sim)   # attach our scores to our data
+jaccard_results <- jaccard_results[order(jaccard_results$jaccard_sim, decreasing=TRUE),]  # sort our results by score
+head(jaccard_results, 3)
+
+#Get top words and documents organized
+top10_docs_id <- jaccard_results$id[1:10]
+top10_docs_index <- as.numeric(rownames(jaccard_results)[1:10])
+word_index <- which(as.numeric(query_dtm > 0) > 0)
+words <- colnames(query_dtm)[word_index]
+
+#### Make a matrix containing the intersection of our top words and our top documents
+intersection_list <- list()
+for (i in 1:length(top10_docs_index)){
+  intersection_list[[i]] <- my_corpus_dtm[top10_docs_index[i],word_index]
+}
+intersection_matrix<-do.call(rbind, intersection_list)
+rownames(intersection_matrix)<-top10_docs_id
+head(intersection_matrix)
+
+superheat(t(intersection_matrix), bottom.label.text.angle = 45, title = "Intersection of Query Words and Documents") 
+
+top10_jaccard_docs <- jaccard_results$id[1:10]
+for (doc in top10_jaccard_docs){
+  print(thesis_data[thesis_data$id == doc,]$title)
+}
+```
+    
+```{r}
+### Cosine Similarity
+cosine_sim<-as.vector(sim2(query_dtm, my_corpus_dtm, method = "cosine", norm = "l2"))
+
+cosine_results <- cbind(thesis_data, cosine_sim)
+cosine_results <- cosine_results[order(cosine_results$cosine_sim, decreasing=TRUE),]
+
+top10_cosine_docs <- cosine_results$id[1:10]
+for (doc in top10_cosine_docs){
+  print(thesis_data[thesis_data$id == doc,]$title)
+}
+```
+    
+```{r}
+combined_corpus <- c(my_corpus, proposal)
+length(combined_corpus)
+
+combined_corpus_it = itoken(combined_corpus, progressbar = FALSE)
+v = create_vocabulary(combined_corpus_it, stopwords = stopwords('en')) %>% 
+  prune_vocabulary(doc_proportion_max = 0.05, term_count_min = 5)
+vectorizer = vocab_vectorizer(v)
+combined_corpus_dtm<-create_dtm(combined_corpus_it, vectorizer)
+
+tfidf = TfIdf$new()
+combined_dtm_tfidf = fit_transform(combined_corpus_dtm, tfidf)
+
+my_corpus_dtm_tfidf <- combined_dtm_tfidf[1:30630,]     # ID our corpus rows
+query_dtm_tfidf <- combined_dtm_tfidf[30630:30631,]       # ID our query row
+
+tfidf_sim <- sim2(query_dtm_tfidf, my_corpus_dtm_tfidf, method = "cosine", norm = "l2")
+tfidf_sim<-as.vector(tfidf_sim[2,]) # we only want the last row
+tfidf_results <- cbind(thesis_data, tfidf_sim)
+tfidf_results <- tfidf_results[order(tfidf_results$tfidf_sim, decreasing=TRUE),]
+
+top10_tfidf_docs <- tfidf_results$id[1:10]
+for (doc in top10_tfidf_docs){
+  print(thesis_data[thesis_data$id == doc,]$title)
+}
+```
+
+
+    Perform a document similarity analysis using Jaccard Similarity, Cosine Similarity, and TF*IDF Cosine Similarity using your example proposal as the “query” and the thesis abstracts in the .csv file as the text in your corpus.
+
+    Compare and contrast the results you obtain with the different methods.
+
+    Select the approach that you feel is best and write a function that takes as input a block of text (a query) and returns both a sorted list of the top 10 recommended thesis documents (title, abstract, score) and a heatmap graphic that shows the intersection of important words and documents.
+
+### Function
+
+```{r}
+search_theses = function(query){
+  prep_fun = function(x) {
+  x %>% 
+    # make text lower case
+    str_to_lower %>% 
+    # remove non-alphanumeric symbols
+    str_replace_all("[^[:alnum:]]", " ") %>% 
+    # collapse multiple spaces
+    str_replace_all("\\s+", " ")
+  }
+  
+  thesis_data = read.csv("./WK5LabData/FindDocuments/NPSTheses.csv")
+  my_corpus = prep_fun(thesis_data$abstract)
+
+  my_corpus_it = itoken(my_corpus, progressbar = FALSE)
+  v = create_vocabulary(my_corpus_it, stopwords = stopwords('en')) %>%  # note the removal of stopwords here
+      prune_vocabulary(doc_proportion_max = 0.05, term_count_min = 5)   # set some thresholds for minimum occurrence
+  vectorizer = vocab_vectorizer(v)                  
+  my_corpus_dtm<-create_dtm(my_corpus_it, vectorizer)   # build a DTM
+  
+  query_prep<-prep_fun(query)
+  query_it <- itoken(query_prep, progressbar = FALSE)
+  query_dtm<-create_dtm(query_it, vectorizer)
+  
+  dtm_words <- colnames(query_dtm)
+  query_words <- dtm_words[as.numeric(query_dtm > 0) > 0]
+  
+  ### Cosine Similarity
+  cosine_sim<-as.vector(sim2(query_dtm, my_corpus_dtm, method = "cosine", norm = "l2"))
+  
+  cosine_results <- cbind(thesis_data, cosine_sim)
+  cosine_results <- cosine_results[order(cosine_results$cosine_sim, decreasing=TRUE),]
+  
+  top_10_results = cosine_results[order(cosine_results$cosine_sim, decreasing=TRUE)[1:10],c(13,8,18)]
+  
+  #Get top words and documents organized
+  top10_docs_id <- cosine_results$id[1:10]
+  top10_docs_index <- as.numeric(rownames(top_10_results)[1:10])
+  word_index <- which(as.numeric(query_dtm > 0) > 0)
+  words <- colnames(query_dtm)[word_index]
+  
+  #### Make a matrix containing the intersection of our top words and our top documents
+  intersection_list <- list()
+  for (i in 1:length(top10_docs_index)){
+    if (sum(top10_docs_index[i])>0) intersection_list[[i]] <- my_corpus_dtm[top10_docs_index[i],word_index]
+  }
+  # Filter out rows with all zero entries
+  non_zero_rows <- sapply(intersection_list, function(x) any(x != 0))
+  intersection_matrix <- do.call(rbind, intersection_list[non_zero_rows])
+  rownames(intersection_matrix) <- top10_docs_id[non_zero_rows]
+  
+  head(intersection_matrix)
+  
+  superheat(t(intersection_matrix), bottom.label.text.angle = 45, left.label.text.size = 1, title = "Intersection of Query Words and Documents") 
+  return(top_10_results)
+}
+
+search_theses(proposal)
+```
+    
+### Questions
+
+Please provide a written discussion of the following in your written submission (no more than one page):
+
+    Clearly identify the proposal you chose as your example
+    
+W17_4, Social Network Analysis of terrorist orgs
+
+    Provide a table etc. of results that compare/contrast the results returned by the three methods
+    
+```{r}
+print('Jaccard Method')
+for (doc in top10_jaccard_docs){
+  print(thesis_data[thesis_data$id == doc,]$title)
+}
+
+print('Cosine Method')
+for (doc in top10_cosine_docs){
+  print(thesis_data[thesis_data$id == doc,]$title)
+}
+
+print('TFIDF Method')
+for (doc in top10_tfidf_docs){
+  print(thesis_data[thesis_data$id == doc,]$title)
+}
+```
+
+
+    Describe the method you think is best given your analysis of the example and why you believe this method is best for the situation.
+
+Cosine similarity seems to produce the most relevant documents for this use case. Most of the returned results have to do with social media or social media analysis
+
+    Describe the procedure you would use to choose between these three methods if you had to actually build this system for NPS (might require more time and people than you have available to you this week)
+    
+Sample a set of proposals currently available from TPO and apply the three methods to them. Then have a panel of people score the relevance of the returned set of similar theses and pick the method that has the highest overall score.
+
+    Provide the results of your function (on a second page) when you apply your function/procedure to a new thesis proposal. Identify the thesis proposal you used as your new query (should be different than the one above). Include the resulting graphic in your writeup and provide the resulting “Top 10 Table” as a .csv attachment named YourLastName_FirstInitial_QueryResults.csv
+    
+```{r}
+new_proposal = read.table("./WK5LabData/FindDocuments/W17_5.txt", sep="\t")
+
+new_proposal
+
+search_theses(new_proposal)
+```
+
+
+Submission Instructions
+
+Your submission items for this week’s take-home lab should include:
+
+The code for performing this week’s take home lab saved as LastName_FirstInital_SimilarityCode.R
+
+A (no more than 2 page) report as a .docx or .pdf file that provides answers to the questions above.
+
+YourLastName_FirstInitial_ERResults.csv
+
+YourLastName_FirstInitial_QueryResults.csv

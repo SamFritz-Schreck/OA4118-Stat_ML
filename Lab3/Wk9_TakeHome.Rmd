@@ -1,0 +1,301 @@
+---
+title: "WK9_Take_Home"
+author: "Sam Fritz-Schreck"
+date: "2024-03-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# In Class Portion
+
+## Introduction
+
+In today’s lab, we’ll use the MNIST dataset, a classic problem in computer vision, to explore the functionality of Convolutional Neural Networks. You can read more about the MNIST dataset here: https://en.wikipedia.org/wiki/MNIST_database.
+
+This lab is adapted from various examples provided in Deep Learning with R by Francois Chollet and J.J. Allaire. In this lab, you’ll perform the following tasks:
+
+    Fit a “standard” feed-forward ANN architecture to the problem and evaluate performance
+
+    Fit a small CNN to the problem and evaluate performance
+
+    Explore some of the features of the CNN to get some understanding of the tasks performed by the various layers
+
+    Complete the lab by answering some questions about ANN, CNN, and supervised learning in general (this week’s take-home lab)
+
+## Loading Needed Packages and Data
+
+All of the data and package support we need for this week’s lab is available via the keras library. Since you already have this library installed, go ahead and load the library:
+
+```{r}
+library(keras)
+
+mnist <- dataset_mnist()
+train_images <- mnist$train$x
+train_labels <- mnist$train$y
+test_images <- mnist$test$x
+test_labels <- mnist$test$y
+```
+
+We can see that the data is pixel values between 0 and 255. We’ll scale our data for this task to be numbers between 0 and 1 (works better with deep learning models):
+
+```{r}
+# Rescale the image data to 0 to 1
+train_images <- train_images / 255
+test_images <- test_images / 255
+
+# Plot the first image in our array
+image(train_images[1,,], col = gray.colors(255))
+```
+
+This rotation occurs because the data is formatted as a raster. We can use the as.raster() function to plot the data in a more readable format. The plot below displays the first three images in our training data:
+
+```{r}
+# Using as.raster fixes our rotation issue
+par(mfrow=c(1,3))
+plot(as.raster(train_images[1,,], max = 1))
+plot(as.raster(train_images[2,,], max = 1))
+plot(as.raster(train_images[3,,], max = 1))
+```
+
+The last task we’ll do here for organizing our data is to transform our vector of classes (digits 0 to 9) into a one-hot encoded matrix.
+
+```{r}
+# Convert our training labels into one-hot encoded classes
+train_labels <- to_categorical(train_labels)
+test_labels <- to_categorical(test_labels)
+```
+
+Note that this one-hot encoding puts our one-hot encoded digits into the appropriate column:
+```{r}
+# Compare values to one-hot encoding matrix
+mnist$train$y[1]
+
+train_labels[1,]
+```
+
+## Classifying with a Standard ANN
+
+The first approach we’ll take to this problem is to use a dense, feed-forward ANN to develop a classification model for this problem. The structure of this ANN will be very similar to the model’s we’ve used for the last few weeks, with the exception that we now have a 10-class multinomial output.
+
+As we have in previous weeks, we’ve got to convert our predictor matrices (in this case images) into 2-D tensors where each row represents all of the predictor values. Thus, we’ve got to take the 28 x 28 image and convert each image into one long vector (length = 28 x 28 = 784), with each position in the vector representing one pixel value in the image:
+
+```{r}
+# Reshape and scale our images for feeding into an ANN (each observation must be in a row tensor)
+train_predictors <- array_reshape(train_images, c(60000, 28 * 28))
+test_predictors <- array_reshape(test_images, c(10000, 28 * 28))
+
+# Check dimensions
+dim(train_predictors)
+dim(test_predictors)
+```
+
+First, we’ll set up a robust ANN architecture for handling this problem.
+
+```{r}
+# Set up a feed-forward dense ANN
+set.seed(1234)
+ANN <- keras_model_sequential() %>%
+  layer_dense(units = 512, activation = "relu", input_shape = c(28 * 28)) %>%
+  layer_dense(units = 10, activation = "softmax")
+
+summary(ANN)
+```
+
+We can see from the summary that this ANN requires a LOT of parameters. There are more than 400,000 weights to be estimated in this model (although it will still converge pretty fast). We’ll go ahead and set up a standard optimization framework for this model:
+
+```{r}
+# Set up optimization protocol
+ANN %>% compile(
+  optimizer = "rmsprop",
+  loss = "categorical_crossentropy",
+  metrics = c("accuracy")
+)
+```
+
+Finally, we’ll fit the model over a relatively short number of epochs and track performance via cross-validation (20% holdout).
+
+```{r}
+# Fit the model
+ANN_history <- ANN %>% 
+  fit(train_predictors, 
+  train_labels, 
+  epochs = 10, batch_size = 128,
+  validation_split = 0.2)
+```
+
+We’ll conduct a quick plot to make sure we aren’t significantly under- or over-fitting the model:
+```{r}
+plot(ANN_history)
+```
+
+
+
+The plots look reasonable, so let’s go ahead and apply our model to the test dataset and evaluate it. First, let’s see what the first few images in our test dataset look like:
+```{r}
+# Plot the test values
+par(mfrow=c(1,3))         # set up a 1 x 3 plotting matrix
+plot(as.raster(test_images[1,,], max = 1))
+plot(as.raster(test_images[2,,], max = 1))
+plot(as.raster(test_images[3,,], max = 1))
+```
+
+Now, we can predict the class of the first few images using the predict_classes() function:
+```{r}
+# ANN %>% predict_classes(test_predictors[1:3,])
+ANN %>% predict(test_predictors[1:3,]) %>% k_argmax() 
+```
+
+We can also get the class probabilities for every class using the predict() function:
+
+```{r}
+ANN  %>% predict(test_predictors[1:3,])
+```
+
+
+Note the extremely high level of confidence for the appropriate class in this model. Let’s do a performance estimate for the entire test dataset (as we’ve done before):
+```{r}
+# Performance evaluation on the test dataset
+ANN %>% evaluate(test_predictors, test_labels)
+```
+
+We can see that we get test dataset performance of about 98%, which is pretty good. However, if you consider the amount of mail that might get redirected to the wrong zip code if you are scanning zip codes with this model, we’d probably like to do better if possible.
+
+## Classifying with a CNN
+
+Convolutional Neural Networks are specifially designed for image data. Therefore, they expect data to arrive in a 4-D tensor: the first dimension is the observations, dimensions two and three represent the pixel values of the image, and dimension four represents the diffferent “channels” for the pixel values for formats such as RGG (red-green-blue). Since we analyzing gray-scale images in this case, we only have one color channel. However, we’ve still got to feed the data into the CNN in that same 4-D sensor format. So, we’ll organize our training and test predictor (image) data as follows:
+
+```{r}
+#  Set up predictors data structure for CNN - note it is slightly different than for ANN
+train_predictors2 <- array_reshape(train_images, c(60000, 28, 28, 1))
+dim(train_predictors2)
+test_predictors2 <- array_reshape(test_images, c(10000, 28, 28, 1))
+dim((test_predictors2))
+```
+
+Now that we’ve got our data organized, let’s set up some convolutional and max pooling layers to process the images:
+```{r}
+# Set up a basic convnet structure
+CNN <- keras_model_sequential() %>%
+  layer_conv_2d(filters = 32, kernel_size = c(3, 3), activation = "relu",          # convolution layer
+                input_shape = c(28, 28, 1)) %>%
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>%                                    # pooling (downsampling) layer
+  layer_conv_2d(filters = 64, kernel_size = c(3, 3), activation = "relu") %>%      # convolution layer
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>%                                    # pooling (downsampling) layer
+  layer_conv_2d(filters = 64, kernel_size = c(3, 3), activation = "relu")          # convolution layer
+```
+
+As discussed in the lecture, the layers above perform the “image processing”. Now, we’ll stack some dense layers onto the end to perform the classification tasks (similar to the approaches we’ve taken in previous weeks). Note that keras pakcage models operate in a somewhat different manner than most models in R. Models are “modified in place” with new commands given (this has been happening “under the hood” in previous labs). So, we can just call our CNN model and “stack” some more layers onto the end of the architecture.
+
+```{r}
+# Add on the classification layers (adjust model in place)
+CNN <- CNN %>% 
+  layer_flatten() %>%                                   # converts our output from above into a 2-D tensor for input to standard ANN architecture
+  layer_dense(units = 64, activation = "relu") %>%     
+  layer_dense(units = 10, activation = "softmax")
+```
+
+Now, let’s get a summary of the entire model:
+
+```{r}
+summary(CNN)
+```
+
+You can see that we’ve got several repeating layers of convolutional and max-pooling layers to start, then a flattening layer to reformat the outputs of those layers into a standard dense ANN architecture, a single dense layer, followed by the final layer that converts our outputs into a 10 class multinomial classification.
+
+Note also that this is a MUCH more parsimonious model than the standard ANN architecture employed above. We’ve got roughly 93,000 weights in this architecture vice more than 400,000 weights in the ANN architecture above.
+
+Let’s compile and fit our CNN model:
+```{r}
+# Set up the optimizer
+CNN %>% compile(
+  optimizer = "rmsprop",
+  loss = "categorical_crossentropy",
+  metrics = c("accuracy")
+)
+
+#
+CNN_history <-CNN %>% fit(
+  train_predictors2, train_labels,
+  epochs = 5, batch_size=64,
+  validation_split = 0.2
+)
+```
+
+We can use the predict_classes() and predict() functions to get model predictions if needed (we will skip in this case), but what we are really interested in is the model’s performance.
+
+```{r}
+CNN %>% evaluate(test_predictors2, test_labels)
+```
+
+We now get an accuracy of a bit more than 99%. While that might not be a huge performance improvement, it would dramatically reduce the number of errors we would get if we were automatically processing zip codes on mail etc. By using a CNN for this problem, we’ve cut our error by almost 50%.
+
+# Take Home Portion
+
+
+## Introduction
+
+For your take-home lab assignment this week, perform the following tasks and answer the following questions.
+
+### Add Dropout    
+    Add some dropout to the layers on the standard ANN model above; does this improve performance (this is a simple extension of last week’s material)? Provide a brief summary of what you did and what you find. Provide the code for your new ANN architecture in your write-up.
+    
+```{r}
+# Define the Sequential model
+ANN <- keras_model_sequential() %>%
+  
+  # Add the first dense layer with dropout
+  layer_dense(units = 512, activation = "relu", input_shape = c(28 * 28)) %>%
+  layer_dropout(rate = 0.3) %>%  # Add dropout
+  layer_dense(units = 10, activation = "softmax")
+
+# Set up optimization protocol
+ANN %>% compile(
+  optimizer = "rmsprop",
+  loss = "categorical_crossentropy",
+  metrics = c("accuracy")
+)
+
+# Fit the model
+ANN_history <- ANN %>% 
+  fit(train_predictors, 
+  train_labels, 
+  epochs = 10, batch_size = 128,
+  validation_split = 0.2)
+
+plot(ANN_history)
+```
+
+```{r}
+# Performance evaluation on the test dataset
+ANN %>% evaluate(test_predictors, test_labels)
+```
+
+I iterated through dropout rates from 0.5 to 0.1 and dropout rates of .1-.3 produce accuracy around 0.981 so we don't see added performance despite the added dropout layer.
+
+### ANN Explaination
+
+    Write a BRIEF one-paragraph summary in non-technical language that explains to senior DoD leader how a standard ANN model solves this digit recognition problem.
+    
+An ANN looks at every individual pixel value and tries to classify the number based the combinations of pixel values the model saw in the training set. The input layer receives pixel values from images, and subsequent hidden layers progressively extract and combine relevant information. The final layer produces output predictions, representing the recognized digits. Training involves adjusting the model based on the disparity between predicted and actual outcomes.
+
+### CNN Explaination
+
+    Write a BRIEF one-paragraph summary in non-technical language that explains to to senior DoD leader how a CNN model solves this digit recognition problem.
+    
+Unlike standard neural networks, CNNs use filters to automatically learn and identify essential information within digit images. Filters in these layers scan the input images for patterns, enabling the model to recognize visual structures. Pooling layers further condense the information, retaining critical information while reducing how much the computer needs to process. This design allows CNNs to efficiently discern complex patterns in digit images, making them particularly effective for tasks like digit recognition
+
+### No Deep Learning Technique
+
+    Now, imagine a world in which deep learning models don’t exist. Using what you’ve learned in this course, how would you solve this problem? Write a short one- or two-paragraph description of the approach you would take for solving this task if you didn’t have the ability to use deep learning models. Do not search online for a solution. The goal for this exercise is to get you to conduct a mental review of all that you have available to you and come with ideas of your own for approaching this task.
+    
+I would number the pixels 1 to n. Using the training data of m observations, I would create a m x n matrix where each row is an image from the training set and each column contains a 0 or 1 for if the pixel is black or white. We can then leverage linear regression with the response being the number in the image 0-9. 
+
+Submission Instructions
+
+For this weekly lab assignment, you should submit:
+
+    A written summary/discussion of your work (as discussed above) in .docx or .pdf format.
+

@@ -1,0 +1,232 @@
+---
+title: "Wk6_Take_home"
+author: "Sam Fritz-Schreck"
+date: "2024-02-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(text2vec)      # used to fit LDA
+library(wordcloud)     # visualize topics
+library(superheat)     # heatmaps 
+library(LDAvis)        # visualization of LDA models
+library(stringr)       # text manipulation
+library(stopwords)     # used to remove stopwords
+
+library(factoextra)
+library(htmlwidgets)
+```
+
+
+## The Situation
+
+In this take-home lab, we’ll return to the “Match My Thesis” situation we used earlier in the quarter. However, we’ll solve a slightly different problem this time using the same data. The file StudentAbstracts.csv contains 16 abstract proposals submitted by students in the Defense Analysis Department at NPS. Your task is to group these 16 students into teams of three to five students that will meet together regularly over the year to discuss their thesis work. The goal is to group students according to the underlying topics/themes that their work explores within the larger context of research conducted within the DA Department over the last 10 years. The provided NPSTheses.csv document contains all of the theses completed at the Naval Postgraduate School over the last 40 years.
+Assignment
+
+Complete the following tasks in order to group your students into appropriate teams:
+
+    Build a topic model for the DA Department Theses using the abstracts contained in NPSTheses.csv. Ignore any thesis not completed exclusively within the DA Department (i.e. joint theses conducted within multiple departments can be ignored) that has not been completed from 2010 to 2018.
+    
+```{r}
+library(lubridate)
+thesis_data = read.csv("./TH_Lab_Data/NPSTheses.csv")
+DA_thesis = thesis_data[thesis_data$department=="Defense Analysis",]
+DA_thesis[9263,]$date = "2000"
+DA_thesis$date <- parse_date_time2(substr(DA_thesis$date, 1, 4),'Y',cutoff_2000 = 24)
+abstracts = DA_thesis[DA_thesis$date>=parse_date_time2('2010',"Y"),]$abstract
+
+prep_fun = function(x) {
+  x %>% 
+    # make text lower case
+    str_to_lower %>% 
+    # remove non-alphanumeric symbols
+    str_replace_all("[^[:alnum:]]", " ") %>% 
+    # collapse multiple spaces
+    str_replace_all("\\s+", " ")
+}
+
+# Create DTM for Base Documents
+my_corpus<-prep_fun(abstracts)
+my_corpus_it = itoken(my_corpus, progressbar = FALSE)
+v = create_vocabulary(my_corpus_it, stopwords = c(stopwords('smart'),'s','u','al','thesis')) %>%  # note the removal of stopwords here
+  prune_vocabulary(doc_proportion_max = 0.05, term_count_min = 5)   # set some thresholds for minimum occurrence
+vectorizer = vocab_vectorizer(v)                  
+my_corpus_dtm<-create_dtm(my_corpus_it, vectorizer)   # build a DTM
+
+# Parameterize and Fit the LDA Model - note this will not run with topicmodels package loaded
+lda_model = LDA$new(n_topics = 10)
+
+# The document - topic distribution
+doc_topic_distr = lda_model$fit_transform(my_corpus_dtm, n_iter = 200)
+
+# The topic - word distribution
+topic_word_dist <- lda_model$topic_word_distribution
+dim(topic_word_dist)
+
+library(servr)
+lda_model$get_top_words()
+
+# Plot results - note that Topic numbers in this plot don't correlate with columns in matrices
+lda_model$plot()
+```
+    
+```{r}
+### Take a look at perplexity scores as we add more topics
+perplexity_list <- list()
+topic_numbers <- c(5, 10, 15, 20, 25, 30, 35, 40, 45, 50)
+counter <- 1
+for (i in topic_numbers){
+  lda_model = LDA$new(n_topics = i)
+  # The document - topic distribution
+  doc_topic_distr = lda_model$fit_transform(my_corpus_dtm, n_iter = 200)
+  topic_word_dist <- lda_model$topic_word_distribution
+  perplexity_list[[counter]] <- perplexity(my_corpus_dtm, topic_word_dist, doc_topic_distr)
+  counter <- counter + 1
+}
+
+# Collect up our results
+perplexity_scores <- do.call(rbind, perplexity_list)
+
+# Generate a plot
+plot(topic_numbers, perplexity_scores,  main = "Perplexity as a Function of Number of Topics", type = 'l')
+```
+
+```{r, eval=FALSE}
+##### Create a Perplexity Plot Function
+perplexity_plot <- function(){
+  perplexity_list <- list()
+  topic_numbers <- c(5, 10, 15, 20, 25, 30, 35, 40, 45, 50)
+  counter <- 1
+  for (i in topic_numbers){
+    lda_model = LDA$new(n_topics = i)
+    # The document - topic distribution
+    doc_topic_distr = lda_model$fit_transform(my_corpus_dtm, n_iter = 200)
+    topic_word_dist <- lda_model$topic_word_distribution
+    perplexity_list[[counter]] <- perplexity(my_corpus_dtm, topic_word_dist, doc_topic_distr)
+    counter <- counter + 1
+  }
+  
+  perplexity_scores <- do.call(rbind, perplexity_list)
+  
+  lines(topic_numbers, perplexity_scores, col='#FF000070')  # creates transparent lines
+}
+# Now Generate a perplexity plot from many different simulation runs
+# Generate a plot
+plot(topic_numbers, perplexity_scores,  main = "Perplexity as a Function of Number of Topics", type = 'l')
+for (j in 1:50){
+  print(j)
+  perplexity_plot()
+}
+```
+
+
+##    Use this topic model to group your students into teams of 3-5 students each.
+    
+```{r}
+# Parameterize and Fit the LDA Model - note this will not run with topicmodels package loaded
+lda_model = LDA$new(n_topics = 10)
+
+# The document - topic distribution
+doc_topic_distr = lda_model$fit_transform(my_corpus_dtm, n_iter = 200)
+
+# The topic - word distribution
+topic_word_dist <- lda_model$topic_word_distribution
+abstracts_new <- read.csv('./TH_Lab_Data/StudentAbstracts.csv')  # Initialize a list to store the data
+
+my_proposals<-prep_fun(abstracts_new$Abstract)
+my_proposals_it = itoken(my_proposals, progressbar = FALSE)
+my_proposals_dtm<-create_dtm(my_proposals_it, vectorizer)   # build a DTM using previous vectorizer
+dim(my_proposals_dtm)       # note that DTM has same number of columns as previous DTM
+new_doc_topic_distr  = lda_model$transform(my_proposals_dtm)  # fits model to new data
+### Build a plot that maps new observations to topic
+superheat(new_doc_topic_distr)
+
+max_clusters <- 5  # Maximum number of clusters
+set.seed(123)  # Set seed for reproducibility
+clusters <- kmeans(new_doc_topic_distr, centers = max_clusters)
+
+# View cluster assignments
+cluster_assignments <- clusters$cluster
+cluster_assignments
+
+
+```
+
+
+Provide written documentation (in your consolidated lab write-up) of your results/approach:
+
+##    Briefly describe and document how you selected the appropriate number of topics to represent work within the DA Deparment over the last 10 years (note that given our approach to the topic, there is no “best answer” here).
+    
+```{r}
+### Take a look at perplexity scores as we add more topics
+perplexity_list <- list()
+topic_numbers <- c(5, 10, 15, 20, 25, 30, 35, 40, 45, 50)
+counter <- 1
+for (i in topic_numbers){
+  lda_model2 = LDA$new(n_topics = i)
+  # The document - topic distribution
+  doc_topic_distr = lda_model2$fit_transform(my_corpus_dtm, n_iter = 200)
+  topic_word_dist <- lda_model2$topic_word_distribution
+  perplexity_list[[counter]] <- perplexity(my_corpus_dtm, topic_word_dist, doc_topic_distr)
+  counter <- counter + 1
+}
+
+# Collect up our results
+perplexity_scores <- do.call(rbind, perplexity_list)
+
+# Generate a plot
+plot(topic_numbers, perplexity_scores,  main = "Perplexity as a Function of Number of Topics", type = 'l')
+```
+    
+
+##    Provide a table or graphic that summarizes one of the topics you’ve modeled. What would be a short title you would give to this topic? Briefly discuss the extent to which you feel this is a valid topic (or not) and why.
+    
+```{r, eval=FALSE}
+# Assuming lda_model is your LDA model
+lda_plot <- lda_model$plot()
+```
+### Special Operations Topic
+
+<iframe src='LDA topics.png' width='100%' height='500px'></iframe>
+
+    Provide tables/graphics that illustrate your method for grouping the 16 thesis students into teams. Briefly desribe how you went about making this decision (i.e. what is your method?).
+    
+```{r}
+fviz_cluster(clusters, data = new_doc_topic_distr,
+             geom = "point",
+             ellipse.type = "convex", 
+             ggtheme = theme_bw()
+             )
+```
+    
+
+##    Provide a descriptive name or title for the team that summarizes the topic(s) in the research area they are focused on. Note that this name should be derived from the underlying topics in their research area.
+    
+Cluster 1/5: Human Factors Students: 4, 5, 6, 7
+
+Cluster 3: Strategic Topics Students: 1, 2, 13
+
+Cluster 4.1: SOF Focused Students: Students 3, 11, 14
+
+Cluster 4.2: Emerging Tech Students: 8, 10, 15
+
+
+
+##    Briefly discuss the extent to which you think that topic modeling was useful/valid for this task.
+    
+Topic Modelling allowed me to deconstruct the students into unsupervised clusters. As with any unsupervised learning technique, I had to look at the individual clusters and either combine two clusters into one group as the topics are adjacent but not the same, or split a cluster due to a match as a result of similar language but the topics are not actually similar in spirit. It was useful for providing a starting point on the groups that I could then manually modify based on the requirement of 3-5 per group and more context from human experience.
+
+##    Briefly describe/summarize another approach that you could use to accomplish this task that is based on the subject matter we have discussed over the last three weeks (note that this might make a good course project); you do not need to implement this approach - simply describe the technques/procedures you could combine to provide an alternative grouping to that conducted above.
+    
+Rather than manually grouping or splitting the clusters, I could have leveraged similarity measures to quantify if cluster 1 and 5 are actually the most adjacent clusters. Similarly, I could have quantified the three closest documents within the fourth cluster to generate a split that way.
+
+Submission Instructions
+
+For this weekly lab assignment, you should submit:
+
+    An R sript file named Lastname_FirstInitial_TopicModeling.R that contains all of your code for the tasks above.
+
+    A written summary/discussion of your work (as discussed above) in .docx or .pdf format.
+

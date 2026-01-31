@@ -89,6 +89,7 @@ mean(sentiment_df)
 median(sentiment_df)
 ```
 
+Overall positive sentiment
 
 ### Plot density of sentiment scores.
 

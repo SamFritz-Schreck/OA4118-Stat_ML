@@ -1,0 +1,262 @@
+---
+title: "Wk8_Take_Home"
+author: "Sam Fritz-Schreck"
+date: "2024-02-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(caret)
+library(nnet)
+library(keras)    # for deep learning
+library(tensorflow)
+library(reticulate)
+library(MASS)     # get Boston dataset (original)
+library(ggplot2)  #plotting support
+library(tibble)   #for organizing results 
+library(dplyr)     #for organizing results 
+library(tidyr)
+```
+
+
+## Introduction
+
+For this week’s take-home lab, you’ll try to develop a model to predict a wine’s quality based on the measurement of its chemical properties (see the image above). The data that is provided in the zipped folder contains two datasets (one for red wine and one for white). An additional file provides information about the dataset. Your task is to develop the best model you can for predicting wine quality based on the chemical properties for either the red or white wine dataset (pick only 1).
+Assignment
+
+## Tasks
+Perform the following tasks:
+
+### Train/Test Split
+    Conduct a training/test split of the data, building a 20% held out test dataset
+    
+```{r}
+data = read.csv("winequality-red.csv")
+
+data$quality = as.factor(data$quality)
+data[,c(1:11)] = scale(data[,c(1:11)])
+
+set.seed(123)
+# randomly select 20% of index values for test 
+test_size <- .2
+index_list <- index_list <- seq(1, dim(data)[1])
+test_index <- sample(index_list, round(test_size*dim(data)[1]), replace=FALSE)
+# Split dataset
+Train <- data[-(test_index),] # indexes not sampled for test
+Test <- data[test_index,]     # indexes samples for test
+```
+    
+### Multinom Regression
+    Use what you learned in OA4106 to fit the best linear regression model you can (consider feature selection etc.) to the data to predict wine quality; use this model as a performance “baseline”
+    
+```{r}
+mlr = multinom(quality~., data=Train)
+
+step_mlr = step(mlr, direction="both")
+
+PredClassMLR = predict(step_mlr, newdata = Test)
+
+confusionMatrix(PredClassMLR, Test$quality)
+```
+    
+    Execute the deep (machine) learning process discussed in the lecture to build a deep learning model for predicting wine quality (note that this could be conducted as a multinomial classification problem but you should take a regresson approach)
+
+### Baseline model
+        Fit a baseline model
+        
+```{r}
+predictors_train = as.matrix(Train[,c(1:11)])
+predictors_test = as.matrix(Test[,c(1:11)])
+response_train = as.numeric(Train$quality)
+response_test = as.numeric(Test$quality)
+
+# Define the epochs we'll consider
+epochs <- 300
+
+# Helper function for display training progress by printing a single dot for each completed epoch.
+print_dot_callback <- callback_lambda(
+  on_epoch_end = function(epoch, logs) {
+    if (epoch %% 80 == 0) cat("\n")
+    cat(".")
+  }
+)   
+
+# Convert the response variable to a matrix of one-hot encoded vectors
+response_train_onehot <- to_categorical(as.integer(response_train) - 1)  # Minus 1 to start labels from 0
+response_test_onehot =  to_categorical(as.integer(response_test) - 1)  # Minus 1 to start labels from 0
+
+
+
+# Build the model for ordinal classification
+model_ordinal <- keras_model_sequential() %>%
+  layer_dense(units = 6, activation = "relu", input_shape = dim(predictors_train)[2]) %>%
+  #layer_dropout(rate = 0.2) %>%
+  layer_dense(units = 6, activation = "softmax")  # Use softmax for multiclass classification
+
+# Use categorical crossentropy loss for ordinal data
+model_ordinal %>% compile(
+  loss = "categorical_crossentropy",
+  optimizer = optimizer_adam(),
+  metrics = list("accuracy")
+)
+
+# Train the model
+history_ordinal <- model_ordinal %>% fit(
+  predictors_train,
+  response_train_onehot,
+  epochs = epochs,
+  validation_split = 0.2,
+  verbose = 0,
+  callbacks = list(print_dot_callback)
+)
+
+# Evaluate on the test set
+model_ordinal %>% evaluate(predictors_test, response_test_onehot)
+plot(history_ordinal, metrics='accuracy', smooth=F)
+```
+
+### Overfitting
+        Overfit a model
+
+```{r}
+# Build the model for ordinal classification
+model_overfit <- keras_model_sequential() %>%
+  layer_dense(units = 20, activation = "relu", input_shape = dim(predictors_train)[2]) %>%
+  layer_dense(units=20, activation = 'relu') %>%
+  layer_dense(units = 6, activation = "softmax")  # Use softmax for multiclass classification
+
+# Use categorical crossentropy loss for ordinal data
+model_overfit %>% compile(
+  loss = "categorical_crossentropy",
+  optimizer = optimizer_adam(),
+  metrics = list("accuracy")
+)
+
+# Train the model
+history_overfit <- model_overfit %>% fit(
+  predictors_train,
+  response_train_onehot,
+  epochs = epochs,
+  validation_split = 0.2,
+  verbose = 0,
+  callbacks = list(print_dot_callback)
+)
+
+# Evaluate on the test set
+model_overfit %>% evaluate(predictors_test, response_test_onehot)
+plot(history_overfit, metrics='accuracy', smooth=F)
+```
+
+### Regularization
+        Use regularization techniques and cross-validation to develop a good deep learning model.
+
+```{r}
+# Build the model for regular classification
+model_regular <- keras_model_sequential() %>%
+  layer_dense(units = 20, activation = "relu", input_shape = dim(predictors_train)[2],
+              kernel_regularizer = regularizer_l2(0.01)) %>%
+  layer_dropout(rate = 0.2) %>%
+  layer_dense(units =6, activation = "softmax")  # Use softmax for multiclass classification
+
+# Use categorical crossentropy loss for regular data
+model_regular %>% compile(
+  loss = "categorical_crossentropy",
+  optimizer = optimizer_adam(learning_rate = 0.001),
+  metrics = list("accuracy")
+)
+
+# Train the model
+history_regular <- model_regular %>% fit(
+  predictors_train,
+  response_train_onehot,
+  epochs = epochs,
+  validation_split = 0.2,
+  verbose = 0,
+  callbacks = list(print_dot_callback)
+)
+
+# Evaluate on the test set
+model_regular %>% evaluate(predictors_test, response_test_onehot)
+plot(history_regular, metrics='accuracy', smooth=F)
+```
+
+
+    Conduct a performance comparison via Mean Absolute Error (MAE) for quality prediction between your linear regression model and your selected deep learnng model.
+
+##Summary
+Provide a summary and discussion of your work in written form (.docx or .pdf) that includes the following:
+
+    Summarize the model/feature selection process you used to fit your linear regression model
+    
+Leveraged a step multinomial regression to identify significant features
+
+    Provide a summary of the fitted linear regression model (i.e. model summary)
+    
+```{r}
+summary(step_mlr)
+```
+
+
+    Briefly summarize (you do not need to provide all of the models etc.) the model fitting procedure you employed to develop your deep learning model. Briefly describe the size and network structure of the various models. Briefly describe the regularization procedures you tried.
+    
+Started with 6 unit layers for the base model as the output is 6 classes. Then tried to over fit starting with 40 units and dialed back until it seemed to not be diverging too much. Once I had the overfit model, I applied l1, l2, and elastic regularization to pick the best technique. Then added dropout and varied the rate.
+
+    Summarize the selected model and describe why/how you chose that particular model (if this is explained above you do not need to repeat yourself).
+    
+```{r}
+summary(model_regular)
+```
+
+
+    Provide performance comparisons on the test dataset between linear regression and your best deep learning model.
+    
+```{r}
+confusionMatrix(PredClassMLR, Test$quality)
+
+model_regular %>% evaluate(predictors_test, response_test_onehot)
+```
+
+
+    Do you think “the juice is worth the squeeze”? Why or why not?
+    
+The deep learning accuracy is contained within the MLR model's 95% confidence interval of (0.5094, 0.6207) so we cannot say that the deep learning model is more accurate than the MLR.
+
+    Provide a (scatter) plot of your predictions vs. the actual assigned quality for your selected linear regression model and your selected deep learning model.
+    
+As I am classifying, I'll do a confusion matrix.
+
+```{r}
+confusionMatrix(PredClassMLR, Test$quality)
+```
+
+```{r}
+# Get the raw predicted probabilities for each class
+predictions_prob <- model_regular %>% predict(predictors_test)
+
+# Convert predicted probabilities to class labels
+predicted_labels <- factor(max.col(predictions_prob) - 1, levels = 0:(ncol(predictions_prob)-1))
+
+# Convert response_test_onehot to class labels
+actual_labels <- factor(max.col(response_test_onehot) - 1, levels = 0:(ncol(response_test_onehot)-1))
+
+# Create confusion matrix
+conf_matrix <- confusionMatrix(predicted_labels, actual_labels)
+
+# Print the confusion matrix
+print(conf_matrix)
+```
+
+
+    Which of these modeling approaches would you employ as an investor (early buyer of wine for later resale at a profit)? Which of these modeling approaches would you employ as a vitner? Why?
+    
+As an investor, I don't care necessarily about what features make a wine higher quality so I would be willing to spend more time tuning the deep learning model to gain the greatest accuracy. As a vitner, I would want to know what features contribute positively or negatively to the overall quality so the MLR model is preferable.
+
+Submission Instructions
+
+For this weekly lab assignment, you should submit:
+
+    An R sript file named Lastname_FirstInitial_DeepLearning.R that contains all of your code for executing the tasks above.
+
+    A written summary/discussion of your work (as discussed above) in .docx or .pdf format.
+

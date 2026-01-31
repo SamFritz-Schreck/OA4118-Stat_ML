@@ -1,0 +1,130 @@
+---
+title: "Wk7_TakeHome"
+author: "Sam Fritz-Schreck"
+date: "2024-02-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+# Load needed packages
+library(keras)  # R interface to Tensorflow
+library(ISLR)   # for getting datasets
+library(ROCR)   # for generating ROC curves
+
+# Load the classification dataset (Default) from ISLR
+data(Default)
+dim(Default)
+```
+
+```{r}
+# Convert categorical values to one-hot encoding
+student.numeric <- rep(0, length(Default$student))  # vector of 0
+student.numeric[Default$student == "Yes"] <- 1      # add 1s for defaults = Yes
+default.numeric <- rep(0, length(Default$default)) # vector of 0
+default.numeric[Default$default == "Yes"] <- 1     # add 1s for students = Yes
+#Rebuild dataset with one-hot encoding
+Default2 <- cbind(default.numeric, student.numeric, Default[,3:4])
+colnames(Default2)[1:2] <- c("default", "student")
+# Build training and test datasets
+set.seed(1928)      # set seed for reproducible example
+dataset <- Default2  # call the dataset (makes building train/test reproducible for new datasets)
+
+# randomly select 20% of index values for test 
+test_size <- .2
+index_list <- index_list <- seq(1, dim(dataset)[1])
+test_index <- sample(index_list, round(test_size*dim(dataset)[1]), replace=FALSE)
+
+# Split dataset
+Train <- dataset[-(test_index),] # indexes not sampled for test
+Test <- dataset[test_index,]     # indexes samples for test
+
+# Normalize/scale train datasets and create "Tensors"
+scale_train <- scale(Train[,3:4]) # scale values that aren't one-hot encoded
+col_means_train <- attr(scale_train, "scaled:center")  # will use this to scale test dataset
+col_stddevs_train <- attr(scale_train, "scaled:scale") # will use this to scale test dataset
+predictors_train<-cbind(Train$student, scale_train)
+colnames(predictors_train)[1] <- c("student")
+predictors_train <- as.matrix(predictors_train) # force matrix (2-D tensor) for TensorFlow
+response_train <- Train$default                 # creat response vector (1-D tensor)
+
+# Use means and standard deviations from training set to normalize test set
+predictors_test <- Test[,2:4]
+predictors_test[,2:3] <- scale(predictors_test[,2:3], center = col_means_train , scale = col_stddevs_train)
+predictors_test <- as.matrix(predictors_test) # force matrix (2-D tensor) for TensorFlow
+response_test <- Test$default                 # creat response vector (1-D tensor)
+
+# Build a Training Dataframe 
+Default.Train <- data.frame(cbind(response_train, predictors_train))
+colnames(Default.Train)[1]<-c("default")
+
+# Build a Test Dataframe
+Default.Test <- data.frame(cbind(response_test, predictors_test))
+colnames(Default.Test)[1]<-c("default")
+
+# Fit the Model
+Logistic.glm <- glm(formula = default ~ .,
+                    family  = binomial(link = "logit"),
+                    data    = Default.Train)
+
+# Calculate accuracy on Test Data
+logistic.glm_class <-  rep(0, length(response_test))
+logistic.glm_class[predict(Logistic.glm, type="response", newdata=Default.Test) >.5] <- 1
+accuracy_logistic.glm <- length(logistic.glm_class[logistic.glm_class == response_test])/length(logistic.glm_class)
+
+logistic.glm_preds <- predict(Logistic.glm, type="response", newdata=Default.Test)
+
+# Generate a ROC Plot
+Logit.GLM.ROC <- performance(prediction(logistic.glm_preds, response_test), measure="tpr", x.measure="fpr")
+
+
+
+# Initialize the model structure
+model_logistic <- keras_model_sequential()
+model_logistic %>%
+  layer_dense(units = 1, activation = 'sigmoid', use_bias=TRUE)
+
+# Specify fitting parameters
+model_logistic %>% compile(
+  loss = 'binary_crossentropy',    # loss function
+  optimizer = optimizer_adam(),    # optimizer
+  metrics = c('accuracy')          # metrics to track
+)
+
+
+
+# Fit the model
+history <- model_logistic %>% fit(
+  predictors_train, response_train,  
+  epochs = 50, batch_size = 50,     
+  validation_split = 0.2
+)
+
+accuracy_logistic <- model_logistic %>% evaluate(predictors_test, response_test)
+
+logistic.NN_preds <- model_logistic %>% predict(predictors_test)
+Logit.NN.ROC <- performance(prediction(logistic.NN_preds, response_test), measure="tpr", x.measure="fpr")
+
+plot(Logit.GLM.ROC, lwd = 2, main = "ROC Curve for Logistic Regression Model")
+lines(attributes(Logit.NN.ROC)$x.values[[1]], attributes(Logit.NN.ROC)$y.values[[1]], lwd = 2, main = "ROC Curve for Logistic Regression Model", col="blue")
+legend(.6, .3, lwd = c(2,2,2), legend = c("Logistic MLE", "Loagistic GD"), col = c("black", "blue"))
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
